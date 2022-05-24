@@ -839,7 +839,8 @@ async function getService(service_uuid) {
         resolve(service);
       })
       .catch((error) =>{
-        alert("GATT Server is disconnected.");
+        // log("GATT Server is disconnected.");
+        alert(error);
         document.getElementById("device-connection-display-status").innerHTML = "Disconnected";
         document.getElementById("control-panel-container").style.display = "none";
         reject(error);
