@@ -141,7 +141,7 @@ let fade_time_menu = document.getElementById("fade-time-menu");
 let enable_fading = document.getElementById("enable-fading");
 let disable_fading = document.getElementById("disable-fading");
 let led_breathing_button = document.getElementById("led-breathing");
-let firmware_update_test_button = document.getElementById("firmware-update-test");
+let firmware_update_file_button = document.getElementById("firmware-update-file-button");
 
 // DEBUG
 let readCharacteristic = document.getElementById("read-ble-characteristic");
@@ -671,7 +671,7 @@ control_gear_commissioning_button.addEventListener("click", function() {
   controlGearCommisioning();
 })
 
-firmware_update_test_button.addEventListener("click", function() {
+firmware_update_file_button.addEventListener("click", function() {
   showOpenFilePicker(FILE_PICKER_OPTIONS)
   .then((array) => {
     log(array);
@@ -684,6 +684,7 @@ firmware_update_test_button.addEventListener("click", function() {
       .then((array_buf) => {
         log(array_buf);
         firmware_data = array_buf;
+        document.getElementById("firmware-update-type-container").style.display = "block";
       })
     })
   })
