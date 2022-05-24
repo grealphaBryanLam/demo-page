@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="styles.css" rel="stylesheet" />
+  </head>
+  <body>
+    <h1>DALI Gateway Web App Interface</h1>
+
+    <div id="device-connection-container">
+      <button id="connect" type="button">Connect</button>
+      <button id="disconnect" type="button">Disconnect</button>
+      <div class="device-connection-echo" id="device-connection-display-text">
+        Device:
+      </div>
+      <div class="device-connection-echo" id="device-connection-display-status">
+        Disconnected
+      </div>
+    </div>
+
+    <div id="control-panel-container">
+      <div id="read-control-gear-container">
+        <button id="read-control-gear" type="button">
+          Identify Control Gear(s) connected
+        </button>
+      </div>
+
+      <div id="selected-control-gear-container">
+        <div
+          class="device-control-dashboard control-gear-selection"
+          id="control-gear-selection-button-container"
+        >
+          <p>
+            Devices' short address(es):
+            <select id="control-gear-select-menu">
+              <!-- <option value="0">0</option>
+              <option value="1">1</option> -->
+            </select>
+            <button id="control-gear-select-button" type="button" style="display: none">Select</button>
+          </p>
+        </div>
+      </div>
+
+      <!-- DEBUG -->
+      <div class="debug" id="read-gtin-contaitner">
+        <button id="set-group-address-button" type="button">Set Control Gear's group address</button>
+        <button id="read-gtin-button" type="button">Get All GTIN</button>
+        <button id="ble-cmd-end-file-transfer-button" type="button">BLE_CMD_END_FILE_TRANSFER (502)</button>
+        <button id="control-gear-commissioning-button" type="button">Commissioning</button>
+        <div id="all-control-gear-gtin"></div>
+      </div>
+      
+      <div id="device-control-dashboard-container">
+        <div id="selected-control-gear-info-container">
+          <div class="device-info-gtin" id="control-gear-gtin-display-text">GTIN: </div>
+          <div class="device-info-gtin" id="control-gear-gtin"></div>
+          
+          <!-- ID can be omitted since some devices have no ID -->
+          <div class="device-info-id" id="control-gear-id-display-text" style="display: none">ID: </div>
+          <div class="device-info-id" id="control-gear-id" style="display: none"></div>
+          <!-- ID can be omitted since some devices have no ID -->
+
+          <div class="device-info-group-address" id="control-gear-group-address-display-text">Group Address: </div>
+          <div class="device-info-group-address" id="control-gear-group-address"></div>
+        </div>
+
+        <div class="control-gear-selection" id="identify-control-gear-container">
+          <button id="identify-control-gear" type="button">Identify Me!</button>
+        </div>
+
+        <div id="ble-debug-characteristic-container">
+          <div class="device-control-dashboard" id="ble-characteristics-container">
+            <div class="ble-characteristics" id="ble-characteristics-display-text">
+              No characteristic yet
+            </div>
+          </div>
+
+          <div
+            class="device-control-dashboard"
+            id="ble-characteristics-control-container"
+          >
+            <button id="read-ble-characteristic" type="button">
+              Read Characteristic
+            </button>
+            <form id="debug-input-form">
+              <input id="write-ble-characteristic" type="text" />
+              <button id="write-ble-characteristic" type="button">
+                Write Characteristic
+              </button>
+            </form>
+          </div>
+        </div>
+
+        <div class="device-control-dashboard" id="refresh-status-container">
+          <button id="refresh-status" type="button">Refresh</button>
+        </div>
+
+        <div class="device-control-dashboard" id="led-status-echo-container">
+          <div class="led-status-echo" id="led-status-display-text">
+            LED status:
+          </div>
+          <div class="led-status-echo" id="led-status">OFF</div>
+        </div>
+
+        <div class="device-control-dashboard" id="led-brightness-echo-container">
+          <div class="led-brightness-echo" id="led-brightness-display-text">
+            LED brightness:
+          </div>
+          <div class="led-brightness-echo" id="led-brightness">0%</div>
+        </div>
+        
+        <div class="device-control-dashboard" id="led-fading-status-container">
+          <div class="led-fading-echo" id="fading-status-text">Fade time:</div>
+          <div class="led-fading-echo" id="fading-status">Disabled</div>
+        </div>
+
+        <div class="device-control-dashboard" id="led-status-control-container">
+          <button id="led-on" type="button">ON</button>
+          <button id="led-off" type="button">OFF</button>
+        </div>
+
+        <div
+          class="device-control-dashboard"
+          id="led-brightness-control-container"
+        >
+          <button id="led-light-down" type="button">Light Down</button>
+          <input
+            type="range"
+            min="0"
+            max="254"
+            value="0"
+            class="slider"
+            id="led-brightness-slider"
+          />
+          <button id="led-light-up" type="button">Light Up</button>
+        </div>
+        
+        <div class="device-control-dashboard" id="fading-control-container">
+          <!-- <input
+            type="range"
+            step="1"
+            min="0"
+            max="15"
+            value="0"
+            class="slider"
+            id="fading-time-control-slider"
+          />
+          <div class="device-control-dashboard" id="fading-time-value">Value</div> -->
+          <h3>Fading Control</h3>
+          <button id="enable-fading" type="button" style="display: none">Enable</button>
+          <button id="disable-fading" type="button" style="display: none">Disable</button>
+          <div id="fade-time-menu-container">
+            <p>
+              Fade Time(in seconds):
+              <select id="fade-time-menu">
+                <option value="0"></option>
+                <option value="1">0.7</option>
+                <option value="2">1.0</option>
+                <option value="3">1.4</option>
+                <option value="4">2.0</option>
+                <option value="5">2.8</option>
+                <option value="6">4.0</option>
+                <option value="7">5.7</option>
+                <option value="8">8.0</option>
+                <option value="9">11.3</option>
+                <option value="10">16.0</option>
+                <option value="11">22.6</option>
+                <option value="12">32.0</option>
+                <option value="13">45.3</option>
+                <option value="14">64.0</option>
+                <option value="15">90.5</option>
+              </select>
+            </p>
+            <button id="led-breathing" type="button">Breathing</button>
+          </div>
+          <div id="fade-time-disabled-container" style="display: none">
+            <p>Fading is disabled.</p>
+          </div>
+        </div>
+
+        <div id="intra-DALI-bus-firmware-update-container">
+          <h2>Firmware Update</h2>
+          <!-- <form id="firmware-update-form">
+            <input id="firmware-update-file" type="file" name="control-gear-firmware" accept=".hex">
+          </form> -->
+          <button id="firmware-update-test" type="button">Choose File</button>
+          <div id="firmware-update-file-name" style="display: inline">No file chosen</div>
+          <div id="firmware-update-type-container">
+            <p>
+              Update by:
+              <select id="firmware-update-type-menu">
+                <option value=""></option>
+                <option value="short-address">Device</option>
+                <option value="group-address">Group (GTIN)</option>
+              </select>
+              <button id="firmware-update-type-button" type="button" style="display: none"></button>
+            </p>
+          </div>
+
+          <div id="firmware-update-short-address-selection-container">
+            <p>
+              Short Address:
+              <select id="firmware-update-short-address-selection-menu">
+                <!-- <option value="0">0</option>
+                <option value="1">1</option> -->
+              </select>
+              <button id="firmware-update-short-address-selection-button" 
+                      type="button"
+                      style="display: none">
+              </button>
+            </p>
+          </div>
+
+          <div id="firmware-update-group-address-selection-container">
+            <p>
+              Group Address (GTIN):
+              <select id="firmware-update-group-address-selection-menu">
+                <!-- <option value="0">0</option>
+                <option value="1">1</option> -->
+              </select>
+              <button id="firmware-update-group-address-selection-button"
+                      type="button"
+                      style="display: none">
+              </button>
+            </p>
+          </div>
+
+          <button id="firmware-update-button" type="button">Update!</button>
+        </div>
+      </div>
+    </div>
+    
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <script src="script.js"></script>
+  </body>
+</html>
