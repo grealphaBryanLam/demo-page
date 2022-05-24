@@ -434,6 +434,7 @@ firmware_update_button.addEventListener("click", async function () {
   // .catch((error) => {
   //   alert(error.message);
   // })
+  
   // replace the fetch method with file system handle
   isValidFile()
   .then(async (data) => {
@@ -1407,6 +1408,12 @@ function handleFiles() {
   file_name = fileList[0].name;
   if(file_name !== "undefined"){ // File is selected
     // show options for user to update (indivdual device / same product)
+    log("foo: handle file");
+    fileList[0].arrayBuffer()
+    .then((array_buf) => {
+      firmware_data = array_buf;
+      log(firmware_data);
+    })
     document.getElementById("firmware-update-type-container").style.display = "block";
     // document.getElementById("firmware-update-short-address-selection-container")
     // document.getElementById("firmware-update-group-address-selection-container")
