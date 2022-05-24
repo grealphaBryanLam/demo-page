@@ -3,6 +3,7 @@
  * @status debug
  * 
  * @TODO
+ * 1. study how to use Wi-Fi on web browser to transfer file (may be no implementation)
  * 1. backend is needed to deal with file (e.g. MongoDB)
  *  - can be omitted since the firmware data would be discarded after refresh 
  * 2. free web hosting for try to perform firmware update via phone [e.g. GitHub Pages (not including file uploading)]
@@ -11,11 +12,13 @@
  * @Issue
  * 1. gattServer.connected / bluetoothDevice.gatt.connected is changed to false
  *    (connectivity)
+ * 2. cannot upload new firmware on phone (showOpenFilePicker() is not supported on phone)
  * 
  * @changelog
  * ver 0.6
  * - fixed the issue of file path
  *  - use File System Access API instead of fetch()
+ * - changed the handler for file selecting
  * 
  * ver 0.5
  * - added breathing LED (auto-intensity changing) feature
@@ -118,7 +121,7 @@ let read_control_gear = document.getElementById("read-control-gear");
 let identify_control_gear = document.getElementById("identify-control-gear");
 let firmware_update_button = document.getElementById("firmware-update-button");
 let file_upload_button = document.getElementById("file-upload-button");
-// let firmware_update_file = document.getElementById("firmware-update-file");
+let firmware_update_file = document.getElementById("firmware-update-file");
 
 let firmware_update_short_address_select_button = document.getElementById(
                                           "firmware-update-short-address-selection-button"
@@ -504,7 +507,7 @@ firmware_update_button.addEventListener("click", async function () {
 
 });
 
-// firmware_update_file.addEventListener("change", handleFiles, false);
+firmware_update_file.addEventListener("change", handleFiles, false);
 
 firmware_update_type_menu.addEventListener("change", function(){
   var dropdown = document.getElementById("firmware-update-type-menu");
@@ -1398,18 +1401,18 @@ function time(text) {
   log('[' + new Date().toJSON().substr(11, 8) + '] ' + text);
 }
 
-// function handleFiles() {
-//   const fileList = this.files; /* now you can work with the file list */
-//   // suppose only one file is selected
-//   file_name = fileList[0].name;
-//   if(file_name !== "undefined"){ // File is selected
-//     // show options for user to update (indivdual device / same product)
-//     document.getElementById("firmware-update-type-container").style.display = "block";
-//     // document.getElementById("firmware-update-short-address-selection-container")
-//     // document.getElementById("firmware-update-group-address-selection-container")
-//     // document.getElementById("firmware-update-button").style.display = "block";
-//   }
-// }
+function handleFiles() {
+  const fileList = this.files; /* now you can work with the file list */
+  // suppose only one file is selected
+  file_name = fileList[0].name;
+  if(file_name !== "undefined"){ // File is selected
+    // show options for user to update (indivdual device / same product)
+    document.getElementById("firmware-update-type-container").style.display = "block";
+    // document.getElementById("firmware-update-short-address-selection-container")
+    // document.getElementById("firmware-update-group-address-selection-container")
+    // document.getElementById("firmware-update-button").style.display = "block";
+  }
+}
 
 async function controlGearCommisioning(){
   return getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)

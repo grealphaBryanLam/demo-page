@@ -52,6 +52,10 @@
   /* margin-top: 10px; */
 }
 
+#firmware-update-file-button-container{
+  margin-top: 10px;
+}
+
 .debug,
 #ble-debug-characteristic-container{
   display: none;
