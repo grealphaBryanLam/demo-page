@@ -53,6 +53,7 @@
 }
 
 #firmware-update-file-button-container{
+  display: none;
   margin-top: 10px;
 }
 
