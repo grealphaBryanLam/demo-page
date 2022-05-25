@@ -3,7 +3,7 @@
  * @status debug
  * 
  * @TODO
- * 1. study how to use Wi-Fi on web browser to transfer file (may be no implementation)
+ * 1. study how to use HTTPS (over Wi-Fi) on web browser to transfer file
  * 1. backend is needed to deal with file (e.g. MongoDB)
  *  - can be omitted since the firmware data would be discarded after refresh 
  * 2. free web hosting for try to perform firmware update via phone [e.g. GitHub Pages (not including file uploading)]
@@ -35,6 +35,7 @@ const CONTROL_GEAR_WRAPPED_GROUP_15_ADDRESS = 255;
 const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
 const CHARACTERISTIC_CMD_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 const CHARACTERISTIC_DEBUG_UUID = "f973fc77-053f-4892-b650-b3aa1cbb90a6";
+const CHARACTERISTIC_FILE_UUID = "ba2c738e-3cb0-4a3c-b9be-2d23694443b7";
 const DESCRIPTOR_DEBUG_PRINT_UUID = "6d65cd6a-7a7c-4200-b69e-843e045a361e";
 
 const DELAY_1MS = 1;
@@ -503,6 +504,13 @@ firmware_update_button.addEventListener("click", async function () {
     })
     .then((promise) => {
       log(promise);
+      getCharacteristic(SERVICE_UUID, CHARACTERISTIC_FILE_UUID)
+      .then((characteristic) => {
+        characteristic.startNotifications()
+        .then((characteristic) => {
+          alert("File uploaded to the device. Devices undergo self-programming");
+        });
+      });
     });
   });
 
@@ -1418,6 +1426,9 @@ function handleFiles() {
     // document.getElementById("firmware-update-short-address-selection-container")
     // document.getElementById("firmware-update-group-address-selection-container")
     // document.getElementById("firmware-update-button").style.display = "block";
+  }
+  else{
+    firmware_data = null;
   }
 }
 
