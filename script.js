@@ -411,6 +411,10 @@ read_control_gear.addEventListener("click", async function () {
       document.getElementById("selected-control-gear-container").style.display = "block";
       loading_screen.style.display = "none";
     });
+  })
+  .catch((error) => {
+    alert(error);
+    loading_screen.style.display = "none";
   });
 });
 
@@ -899,6 +903,9 @@ function getCharacteristic(service_uuid, characteristic_uuid) {
         .catch((error) => {
           reject(error);
         });
+    })
+    .catch((error) => {
+      reject(error);
     });
   });
 }
