@@ -161,6 +161,16 @@ connectButton.addEventListener("click", async function () {
   connect()
   .then((promise) => {
     loading_screen.style.display = "none";
+    // GATT operation in progress
+    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_FILE_UUID)
+    .then((characteristic) => {
+      characteristic.startNotifications()
+      .then((characteristic) => {
+        time("wait notification");
+      });
+
+      characteristic.addEventListener("characteristicvaluechanged", btFileCharacteristicNotifyHandler);
+    });
   })
   .catch((error) => {
     loading_screen.style.display = "none";
@@ -520,15 +530,15 @@ firmware_update_button.addEventListener("click", async function () {
     .then((promise) => {
       log(promise);
 
-      getCharacteristic(SERVICE_UUID, CHARACTERISTIC_FILE_UUID)
-      .then((characteristic) => {
-        characteristic.startNotifications()
-        .then((characteristic) => {
-          time("wait notification");
-        });
+      // getCharacteristic(SERVICE_UUID, CHARACTERISTIC_FILE_UUID)
+      // .then((characteristic) => {
+      //   characteristic.startNotifications()
+      //   .then((characteristic) => {
+      //     time("wait notification");
+      //   });
 
-        characteristic.addEventListener("characteristicvaluechanged", btNotifyHandler);
-      });
+      //   characteristic.addEventListener("characteristicvaluechanged", btFileCharacteristicNotifyHandler);
+      // });
     });
   });
 
@@ -1498,7 +1508,7 @@ async function isCommissionFinished() {
         var num_of_device_found = parseInt(str_buf);
         log(str_buf);
         log(num_of_device_found);
-
+        alert("Number of device(s) found: " + num_of_device_found);
         if(num_of_device_found == 0){
           reject("no device");
         }
@@ -1608,10 +1618,23 @@ function isValidFile(){
   });
 }
 
-function btNotifyHandler(event){
+function btFileCharacteristicNotifyHandler(event){
   // event.target.value: str_buf
   let dataview = event.target.value;
   var str_buf = new TextDecoder().decode(dataview);
   time(str_buf);
+  if(str_buf.toString() == "Y"){
+    log("BT notification: action completed");
+  }
+  else if(str_buf.toString() == "C"){
+    time("BT notification: device connected");
+  }
   loading_screen.style.display = "none";
+  // getCharacteristic(SERVICE_UUID, CHARACTERISTIC_FILE_UUID)
+  // .then((characteristic) => {
+  //   characteristic.stopNotifications()
+  //   .then((promise) => {
+  //     log("stop receive notification");
+  //   });
+  // });
 }
