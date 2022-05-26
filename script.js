@@ -386,20 +386,20 @@ read_control_gear.addEventListener("click", async function () {
               });
     })
     // change the firmware update short address options
-    .then((prmoise) => {
+    .then(async (prmoise) => {
       return updateFirmwareUpdateShortAddressMenu()
         .then((promise) => {
           return promise;
         });
     })
-    .then((promise) => {
+    .then(async (promise) => {
       // change the firmware update group address options
       return updateFirmwareUpdateGroupAddressMenu()
         .then((promise) => {
           return promise;
         });
     })
-    .then((promise) => {
+    .then(async (promise) => {
       return new Promise((resolve, reject) => {
         log(availiable_control_gear);
         log(control_gear_group_address);
@@ -863,7 +863,7 @@ async function gatt_disconnect() {
   return new Promise(async (resolve, reject) => {
     log("Disconnecting from Bluetooth Device...");
     if (bluetoothDeviceGattServer.connected) {
-      await bluetoothDeviceGattServer.disconnect();
+      bluetoothDeviceGattServer.disconnect();
       bluetoothDevice = null;
       await delay_ms(1000);
       log("> Bluetooth Device disconnected.");
