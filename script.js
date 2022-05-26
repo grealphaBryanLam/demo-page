@@ -146,6 +146,7 @@ let enable_fading = document.getElementById("enable-fading");
 let disable_fading = document.getElementById("disable-fading");
 let led_breathing_button = document.getElementById("led-breathing");
 let firmware_update_file_button = document.getElementById("firmware-update-file-button");
+let loading_screen = document.getElementById("loading-screen-container");
 
 // DEBUG
 let readCharacteristic = document.getElementById("read-ble-characteristic");
@@ -155,11 +156,19 @@ let set_group_address_button = document.getElementById("set-group-address-button
 let ble_cmd_end_file_transfer_button = document.getElementById("ble-cmd-end-file-transfer-button");
 let control_gear_commissioning_button = document.getElementById("control-gear-commissioning-button");
 
-connectButton.addEventListener("click", function () {
-  connect();
+connectButton.addEventListener("click", async function () {
+  loading_screen.style.display = "block";
+  connect()
+  .then((promise) => {
+    loading_screen.style.display = "none";
+  })
+  .catch((error) => {
+    loading_screen.style.display = "none";
+  });
+  
 });
 
-disconnectButton.addEventListener("click", function () {
+disconnectButton.addEventListener("click", async function () {
   disconnect();
 });
 
@@ -339,7 +348,7 @@ led_brightness_slider.addEventListener("change", async function () {
 });
 
 read_control_gear.addEventListener("click", async function () {
-  log(bluetoothDevice);
+  loading_screen.style.display = "block";
   controlGearCommisioning()
   .then(async (promise) => {
     // read CMD characteristic every 5 seconds
@@ -400,6 +409,7 @@ read_control_gear.addEventListener("click", async function () {
     })
     .then((promise) => {
       document.getElementById("selected-control-gear-container").style.display = "block";
+      loading_screen.style.display = "none";
     });
   });
 });
@@ -435,7 +445,8 @@ firmware_update_button.addEventListener("click", async function () {
   // .catch((error) => {
   //   alert(error.message);
   // })
-  
+
+  loading_screen.style.display = "block";
   // replace the fetch method with file system handle
   isValidFile()
   .then(async (data) => {
@@ -504,6 +515,7 @@ firmware_update_button.addEventListener("click", async function () {
     })
     .then((promise) => {
       log(promise);
+
       getCharacteristic(SERVICE_UUID, CHARACTERISTIC_FILE_UUID)
       .then((characteristic) => {
         characteristic.startNotifications()
@@ -578,6 +590,7 @@ firmware_update_group_address_select_menu.addEventListener("change", function() 
 })
 
 control_gear_select_menu.addEventListener("change", async function() {
+  loading_screen.style.display = "block";
   var dropdown = document.getElementById("firmware-update-group-address-selection-menu");
   log(dropdown.value);
   log(typeof(dropdown.value));
@@ -595,6 +608,7 @@ control_gear_select_menu.addEventListener("change", async function() {
           document.getElementById(
             "device-control-dashboard-container"
           ).style.display = "block";
+          loading_screen.style.display = "none";
           resolve("ok");
         });
       });
@@ -604,6 +618,7 @@ control_gear_select_menu.addEventListener("change", async function() {
     document.getElementById(
       "device-control-dashboard-container"
     ).style.display = "none";
+    loading_screen.style.display = "none";
   });
 })
 
@@ -711,28 +726,33 @@ firmware_update_file_button.addEventListener("click", function() {
 let deviceCache = null;
 
 async function connect() {
-  // Connect to the bluetooth device
-  requestBluetoothDevice()
-  .then((gattServer) => {
-    log("Device: " + gattServer.connected);
-    if (gattServer.connected) {
-      document.getElementById("read-control-gear-container").style.display = "block";
-    }
-    else{
-      alert("Cannot connect the controller. Please turn it off and on.");
+  return new Promise((resolve, reject) => {
+    // Connect to the bluetooth device
+    requestBluetoothDevice()
+    .then((gattServer) => {
+      log("Device: " + gattServer.connected);
+      if (gattServer.connected) {
+        document.getElementById("read-control-gear-container").style.display = "block";
+      }
+      else {
+        alert("Cannot connect the controller. Please turn it off and on.");
+        document.getElementById("read-control-gear-container").style.display = "none";
+      }
+      resolve("promise");
+    })
+    .catch((error) => {
+      log(error);
       document.getElementById("read-control-gear-container").style.display = "none";
-    }
-  })
-  .catch((error) => {
-    log(error);
-    document.getElementById("read-control-gear-container").style.display = "none";
+      reject(error);
+    });
+    // // acquire the short addressed control gear on the DALI bus
+    // await getControlGearPresent();
   });
-  // // acquire the short addressed control gear on the DALI bus
-  // await getControlGearPresent();
 }
 
 async function disconnect() {
   // sometimes cannot disconnect device. Review needed.
+  loading_screen.style.display = "block";
   await gatt_disconnect();
   if (!bluetoothDevice) {
     log("No need to disconnect.");
@@ -740,6 +760,8 @@ async function disconnect() {
   document.getElementById("read-control-gear-container").style.display = "none";
   document.getElementById("selected-control-gear-container").style.display = "none";
   document.getElementById("device-control-dashboard-container").style.display = "none";
+
+  loading_screen.style.display = "none";
 }
 
 // 2022-05-13 Bryan
@@ -834,15 +856,17 @@ async function gatt_connect(device) {
 }
 
 async function gatt_disconnect() {
-  log("Disconnecting from Bluetooth Device...");
-  if (bluetoothDeviceGattServer.connected) {
-    await bluetoothDeviceGattServer.disconnect();
-    bluetoothDevice = null;
-    await delay_ms(1000);
-    log("> Bluetooth Device disconnected.");
-    document.getElementById("device-connection-display-status").innerHTML =
-      "Disconnected";
-  }
+  return new Promise(async (resolve, reject) => {
+    log("Disconnecting from Bluetooth Device...");
+    if (bluetoothDeviceGattServer.connected) {
+      await bluetoothDeviceGattServer.disconnect();
+      bluetoothDevice = null;
+      await delay_ms(1000);
+      log("> Bluetooth Device disconnected.");
+      document.getElementById("device-connection-display-status").innerHTML = "Disconnected";
+      resolve("disconnected");
+    }
+  });
 }
 
 async function getService(service_uuid) {
@@ -922,6 +946,7 @@ function asciiToUint8Array(str) {
 
 async function refreshControlDashboard() {
   return new Promise(async (resolve, reject) => {
+    loading_screen.style.display = "block";
     // Ask ESP32 for actual brightness
     // hardcode short address as 0x00 first
     getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID).then(
@@ -953,6 +978,8 @@ async function refreshControlDashboard() {
           setTimeout(refreshControlDashboard, 500 /* ms */);
         }
         led_brightness_slider.value = brightness;
+
+        loading_screen.style.display = "none";
         resolve(brightness);
       });
   });
@@ -1413,7 +1440,7 @@ function time(text) {
 }
 
 function handleFiles() {
-  const fileList = this.files; /* now you can work with the file list */
+  const fileList = this.files;
   // suppose only one file is selected
   file_name = fileList[0].name;
   if(file_name !== "undefined"){ // File is selected
@@ -1489,6 +1516,7 @@ function refreshSliderValue(brightness){
 
 async function refreshFadingInfo(){
   return new Promise((resolve, reject) => {
+    loading_screen.style.display = "block";
     getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
     .then((characteristic) => {
       return characteristic.writeValueWithoutResponse(
@@ -1531,6 +1559,7 @@ async function refreshFadingInfo(){
               in_breathing = false;
             }
 
+            loading_screen.style.display = "none";
             resolve("promise");
           });
         });
@@ -1577,4 +1606,5 @@ function btNotifyHandler(event){
   let dataview = event.target.value;
   var str_buf = new TextDecoder().decode(dataview);
   time(str_buf);
+  loading_screen.style.display = "none";
 }
