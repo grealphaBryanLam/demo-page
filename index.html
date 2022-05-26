@@ -1,11 +1,17 @@
 <!DOCTYPE html>
-<html>
+<html style="margin-left: 10px">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="https://www.w3schools.com/w3css/4/w3.css" rel="stylesheet">
     <link href="styles.css" rel="stylesheet" />
   </head>
   <body>
+    <!-- Loading screen div -->
+    <div id="loading-screen-container">
+      <div class="lds-facebook" id="loading-screen"><div></div><div></div><div></div></div>
+    </div>
+
     <h1>DALI Gateway Web App Interface</h1>
 
     <div id="device-connection-container">
@@ -232,7 +238,7 @@
         </div>
       </div>
     </div>
-    
+
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
     <script src="script.js"></script>
   </body>
