@@ -1770,11 +1770,17 @@ function btFileCharacteristicNotifyHandler(event){
   let dataview = event.target.value;
   var str_buf = new TextDecoder().decode(dataview);
   time(str_buf);
-  if(str_buf.toString() == "Y"){
-    log("BT notification: action completed");
+  if(str_buf.toString() == "B"){
+    alert("BT notification: File transferred. But, control gear not ready");
   }
-  else if(str_buf.toString() == "C"){
-    time("BT notification: device connected");
+  if(str_buf.toString() == "Y"){
+    alert("BT notification: Firmware update transfer completed");
+  }
+  else if(str_buf.toString() == "G"){
+    alert("BT notification: NO control gear exist");
+  }
+  else if(str_buf.toString() == "F"){
+    alert("BT notification: Firmware update failed");
   }
   loading_screen.style.display = "none";
   // getCharacteristic(SERVICE_UUID, CHARACTERISTIC_FILE_UUID)
