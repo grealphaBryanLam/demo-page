@@ -613,9 +613,12 @@ control_gear_select_menu.addEventListener("change", async function() {
   .then(async (promise) =>{
     refreshControlDashboard()
     .then((brightness) => {
-      return new Promise((resolve, reject) => {
+      return new Promise(async(resolve, reject) => {
+        await delay_ms(200);
         refreshFadingInfo()
         .then((promise) => {
+          // also refresh the selected option
+
           document.getElementById("control-gear-gtin").innerHTML  = "0x" + control_gear_gtin[control_gear_short_address].toString(16).toUpperCase();
           document.getElementById("control-gear-group-address").innerHTML = control_gear_group_address[control_gear_short_address];
           // refreshSliderValue(brightness);
@@ -992,8 +995,9 @@ async function refreshControlDashboard() {
       }
     );
     
-    // decrease the waiting time
-    await delay_ms(200);
+    // 2022-05-27 Bryan
+    // DEBUG: Increase the waiting time, so that the response should not be empty
+    await delay_ms(300);
 
     getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
       .then((characteristic) => {
@@ -1589,6 +1593,8 @@ async function refreshFadingInfo(){
             if(found && fade_time > 0){
               document.getElementById("fading-status").innerHTML = fade_time;
               document.getElementById("led-breathing").style.display = "block";
+              // note.style.cssText
+              document.getElementById("fade-time-code-" + fade_time_code.toString()).selected += true; 
               in_breathing = true;
             }
             else{
@@ -1596,7 +1602,7 @@ async function refreshFadingInfo(){
               document.getElementById("led-breathing").style.display = "none";
               in_breathing = false;
             }
-
+            
             loading_screen.style.display = "none";
             resolve("promise");
           })
