@@ -72,6 +72,13 @@ const FILE_PICKER_OPTIONS = {
   multiple: false
 };
 
+const ERROR_FADING_DISABLED = -1;
+const ERROR_FADING_SET_TO_DISABLED = -2;
+const ERROR_FADE_TIME_MISSING = -3;
+const GOT_FADE_TIME = 1;
+
+const NORMAL_DELAY_TIME = 200;
+
 var bluetoothDevice;
 var bluetoothDeviceGattServer;
 
@@ -106,6 +113,10 @@ var target_light_level;
 var update_latest_info = false;
 
 var firmware_data;
+
+// 2022-05-27 Bryan
+var request_fade_time_fail_counter = 0;
+var fading_disabled = false;
 
 let connectButton = document.getElementById("connect");
 let disconnectButton = document.getElementById("disconnect");
@@ -183,6 +194,7 @@ disconnectButton.addEventListener("click", async function () {
 });
 
 refreshStatus.addEventListener("click", async function () {
+  in_breathing = false;
   // bluetoothDevice.gatt.getPrimaryService(SERVICE_UUID)
   // .then(service =>{
   //     log('>> getting characteristics');
@@ -604,6 +616,9 @@ firmware_update_group_address_select_menu.addEventListener("change", function() 
 })
 
 control_gear_select_menu.addEventListener("change", async function() {
+  // reset state of led breathing
+  in_breathing = false;
+
   loading_screen.style.display = "block";
   var dropdown = document.getElementById("firmware-update-group-address-selection-menu");
   log(dropdown.value);
@@ -639,21 +654,30 @@ control_gear_select_menu.addEventListener("change", async function() {
   });
 })
 
-fade_time_menu.addEventListener("change", async function(){
+fade_time_menu.addEventListener("change", async function() {
+  in_breathing = false;
   var dropdown = document.getElementById("fade-time-menu");
-  var fade_time_code = dropdown.value;
-  log(fade_time_code);
-  log(typeof(fade_time_code));
-  getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
-  .then((characteristic) => {
-    characteristic.writeValueWithoutResponse(
-      asciiToUint8Array(control_gear_short_address.toString() + BLE_CMD_SET_FADE_TIME + fade_time_code)
-    );
-  })
-  .then(async (promise) => {
-    await delay_ms(200);
-    refreshFadingInfo();
-  })
+  if(!fading_disabled){
+    var fade_time_code = dropdown.value;
+    log(fade_time_code);
+    log(typeof(fade_time_code));
+    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+    .then((characteristic) => {
+      characteristic.writeValueWithoutResponse(
+        asciiToUint8Array(control_gear_short_address.toString() + BLE_CMD_SET_FADE_TIME + fade_time_code)
+      );
+    })
+    .then(async (promise) => {
+      /** 
+       * @TODO check the computing time for the command sequence to optimze the timing
+       */
+      await delay_ms(300);
+      refreshFadingInfo();
+    })
+  }
+  else{
+    dropdown.disabled = true;
+  }
 })
 
 enable_fading.addEventListener("click", function(){
@@ -670,10 +694,12 @@ led_breathing_button.addEventListener("click", async function(){
   led_breathing_toggle_state *= -1;
   if(led_breathing_toggle_state > 0){
     log("breathing");
+    in_breathing = true;
     ledBreathing();
   }
   else{
     log("off");
+    in_breathing = false;
   }
   refreshControlDashboard();
   
@@ -738,7 +764,7 @@ firmware_update_file_button.addEventListener("click", function() {
   .catch((error) => {
     document.getElementById("firmware-update-file-name").innerText = "No file chosen";
     firmware_data = null;
-  })
+  });
 })
 
 let deviceCache = null;
@@ -1005,22 +1031,28 @@ async function refreshControlDashboard() {
       })
       .then((dataview) => {
         log(dataview);
-        var brightness = dataview.getUint8(0);
-        change_led_status_text(brightness);
-        document.getElementById("led-brightness").innerHTML =
-          parseInt((brightness * 100) / MAX_BRIGHTNESS) +
-          "% (Val: " +
-          brightness +
-          ")";
+        if(dataview.byteLength > 0){
+          var brightness = dataview.getUint8(0);
+          change_led_status_text(brightness);
+          document.getElementById("led-brightness").innerHTML =
+            parseInt((brightness * 100) / MAX_BRIGHTNESS) +
+            "% (Val: " +
+            brightness +
+            ")";
 
-        if(in_breathing && brightness != target_light_level){
-          setTimeout(refreshControlDashboard, 500 /* ms */);
+          if(in_breathing && brightness != target_light_level){
+            setTimeout(refreshControlDashboard, 500 /* ms */);
+          }
+          led_brightness_slider.value = brightness;
+          if(!in_breathing){
+            loading_screen.style.display = "none";
+          }
+          resolve(brightness);
         }
-        led_brightness_slider.value = brightness;
-        if(!in_breathing){
+        else{
           loading_screen.style.display = "none";
+          reject("Cannot fetch data");
         }
-        resolve(brightness);
       });
   });
 }
@@ -1558,61 +1590,145 @@ function refreshSliderValue(brightness){
 
 async function refreshFadingInfo(){
   return new Promise((resolve, reject) => {
+    var reply;
+    var dropdown = document.getElementById("fade-time-menu");
     loading_screen.style.display = "block";
-    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
-    .then((characteristic) => {
-      return characteristic.writeValueWithoutResponse(
-        asciiToUint8Array(control_gear_short_address.toString() + BLE_CMD_QUERY_FADE_TIME_AND_RATE + (0).toString())
-      )
-      .then(async (promise) => {
-        await delay_ms(300);
+    if(fading_disabled){
+      // show blank in the selected state
+      dropdown.children[0].selected = true;
+      for(var i = 1; i < dropdown.children.length; i++){
+        dropdown.children[i].selected = false;
+      }
+      // disable the selection
+      dropdown.disabled = true;
+
+      getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+      .then((characteristic) => {
+        characteristic.writeValueWithoutResponse(
+          asciiToUint8Array(control_gear_short_address.toString() + BLE_CMD_SET_FADE_TIME + (0).toString())
+        );
+      });
+      
+      reply = ERROR_FADING_DISABLED;
+      // reset loading screen
+      loading_screen.style.display = "none";
+      reject(reply);
+    }
+    else {
+      if(request_fade_time_fail_counter >= 3){
+        fading_disabled = true;
+        reply = ERROR_FADING_SET_TO_DISABLED;
+        loading_screen.style.display = "none";
+        reject(reply);
+      }
+      else{
         getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
-          .then((characteristic) =>{
-          return characteristic.readValue()
-          .then((dataview) => {
-            log(dataview);
-            return dataview.getUint8(0);
-          })
-          .then((res) => {
-            log(res);
-            log(typeof(res));
-            var fade_time_code = (res >> 4);
-            var fade_rate_code = (res & 15);
-            var children = document.getElementById("fade-time-menu").children;
-            var i = 0;
-            var found = false;
-            while(!found && i < children.length) {
-              if(children[i].value === (fade_time_code).toString()){
-                fade_time = children[i].innerText;
-                found = true;
-              }
-              i++;
-            }
-            log("fade time: " + fade_time);
-            fade_time = parseFloat(fade_time);
-            if(found && fade_time > 0){
-              document.getElementById("fading-status").innerHTML = fade_time;
-              document.getElementById("led-breathing").style.display = "block";
-              // note.style.cssText
-              document.getElementById("fade-time-code-" + fade_time_code.toString()).selected += true; 
-              in_breathing = true;
-            }
-            else{
-              document.getElementById("fading-status").innerHTML = "Disabled";
-              document.getElementById("led-breathing").style.display = "none";
-              in_breathing = false;
-            }
-            
-            loading_screen.style.display = "none";
-            resolve("promise");
-          })
-          .catch((error) => {
-            log(error);
-            loading_screen.style.display = "none";
+        .then((characteristic) => {
+          return characteristic.writeValueWithoutResponse(
+            asciiToUint8Array(control_gear_short_address.toString() + BLE_CMD_QUERY_FADE_TIME_AND_RATE + (0).toString())
+          )
+          .then(async (promise) => {
+            await delay_ms(300);
+            await getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+              .then((characteristic) =>{
+              return characteristic.readValue()
+              .then((dataview) => {
+                log(dataview);
+                // 2022-05-27 Bryan 
+                /**
+                 * if characteristic cannot get from the control gear,
+                 * increment request_fade_time_fail_counter.
+                 * 
+                 * Case: (request_fade_time_fail_counter >= 3),
+                 *  Disable the breathing button and menu for the device on-time
+                 */
+                if(dataview.byteLength == 0){ // reply cannot be got from the control gear
+                  request_fade_time_fail_counter++;
+                  return -1;  // return -1 to indicate error occur: reply is corrupted during transmission                
+                }
+                else{
+                  return dataview.getUint8(0);
+                }
+              })
+              .then(async (res) => {
+                var found = false;
+                log(res);
+                log(typeof(res));
+                if(res == -1){
+                  await delay_ms(NORMAL_DELAY_TIME);
+                  
+                  getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+                  .then((characteristic) => {
+                    characteristic.writeValueWithoutResponse(
+                      asciiToUint8Array(control_gear_short_address.toString() + BLE_CMD_SET_FADE_TIME + (0).toString())
+                    );
+                  });
+
+                  fade_time = 0;
+
+                  reply = ERROR_FADE_TIME_MISSING;
+                }
+                else {
+                  var fade_time_code = (res >> 4);
+                  var fade_rate_code = (res & 15);
+                  var children = document.getElementById("fade-time-menu").children;
+                  var i = 0;
+                  while(!found && i < children.length) {
+                    if(children[i].value === (fade_time_code).toString()){
+                      children[i].selected = false;
+                      fade_time = children[i].innerText;
+                      found = true;
+                    }
+                    i++;
+                  }
+
+                  log("fade time: " + fade_time);
+                  // fade_time_code = 0: innerText => "undefined"
+                  if(fade_time == "undefined"){
+                    fade_time = 0;
+                  }
+                  else{
+                    fade_time = parseFloat(fade_time);
+                  }
+
+                  reply = GOT_FADE_TIME;
+                }
+
+                if(found && fade_time > 0){
+                  document.getElementById("fading-status").innerHTML = fade_time;
+                  document.getElementById("led-breathing").style.display = "block";
+                  // reset the selected option
+                  children[0].selected = false;
+                  // set to corresponding option on the bus to be shown on the menu
+                  document.getElementById("fade-time-code-" + fade_time_code.toString()).selected = true; 
+                  in_breathing = true;
+                }
+                else{
+                  document.getElementById("fading-status").innerHTML = "Disabled";
+                  document.getElementById("led-breathing").style.display = "none";
+                  in_breathing = false;
+                }
+
+                // reset loading screen
+                loading_screen.style.display = "none";
+                if(reply > 0){
+                  resolve(reply);
+                }
+                else{
+                  reject(reply);
+                }
+              })
+              .catch((error) => {
+                // reset loading screen
+                loading_screen.style.display = "none";
+                log(error);
+                reject(error);
+              });
+            });
           });
         });
-      });
-    });
+      }
+    }
   });
 }
 
@@ -1632,12 +1748,8 @@ async function ledBreathing(){
       );
     })
     await delay_ms(fade_time * 1000);
-    if(led_breathing_toggle_state > 0){
+    if(in_breathing){
       setTimeout(ledBreathing, 200);
-      in_breathing = true;
-    }
-    else{
-      in_breathing = false;
     }
   })
 }
