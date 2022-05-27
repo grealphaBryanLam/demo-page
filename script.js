@@ -673,6 +673,7 @@ led_breathing_button.addEventListener("click", async function(){
     log("off");
   }
   refreshControlDashboard();
+  
 })
 
 led_brightness_text.addEventListener("change", function(){
@@ -767,15 +768,26 @@ async function connect() {
 async function disconnect() {
   // sometimes cannot disconnect device. Review needed.
   loading_screen.style.display = "block";
-  await gatt_disconnect();
-  if (!bluetoothDevice) {
-    log("No need to disconnect.");
-  }
-  document.getElementById("read-control-gear-container").style.display = "none";
-  document.getElementById("selected-control-gear-container").style.display = "none";
-  document.getElementById("device-control-dashboard-container").style.display = "none";
+  gatt_disconnect()
+  .then(
+    (disconnected) => {
+      document.getElementById("read-control-gear-container").style.display = "none";
+      document.getElementById("selected-control-gear-container").style.display = "none";
+      document.getElementById("device-control-dashboard-container").style.display = "none";
 
-  loading_screen.style.display = "none";
+      loading_screen.style.display = "none";
+    },
+    (error) => {
+      if (!bluetoothDevice) {
+        log("No need to disconnect.");
+      }
+      document.getElementById("read-control-gear-container").style.display = "none";
+      document.getElementById("selected-control-gear-container").style.display = "none";
+      document.getElementById("device-control-dashboard-container").style.display = "none";
+
+      loading_screen.style.display = "none";
+    }
+  );
 }
 
 // 2022-05-13 Bryan
@@ -872,7 +884,11 @@ async function gatt_connect(device) {
 async function gatt_disconnect() {
   return new Promise(async (resolve, reject) => {
     log("Disconnecting from Bluetooth Device...");
-    if (bluetoothDeviceGattServer.connected) {
+    if(bluetoothDeviceGattServer == null){
+      log("Bluetooth server object does not exist");
+      reject("error");
+    }
+    else{
       bluetoothDeviceGattServer.disconnect();
       bluetoothDevice = null;
       await delay_ms(1000);
@@ -963,7 +979,9 @@ function asciiToUint8Array(str) {
 
 async function refreshControlDashboard() {
   return new Promise(async (resolve, reject) => {
-    loading_screen.style.display = "block";
+    if(!in_breathing){
+      loading_screen.style.display = "block";
+    }
     // Ask ESP32 for actual brightness
     // hardcode short address as 0x00 first
     getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID).then(
@@ -995,8 +1013,9 @@ async function refreshControlDashboard() {
           setTimeout(refreshControlDashboard, 500 /* ms */);
         }
         led_brightness_slider.value = brightness;
-
-        loading_screen.style.display = "none";
+        if(!in_breathing){
+          loading_screen.style.display = "none";
+        }
         resolve(brightness);
       });
   });
@@ -1492,7 +1511,8 @@ async function isCommissionFinished() {
     var commissionFinished = false;
     var num_of_entry = 0;
     var entryTime = Date.now();
-
+    // cheange the logic to esacpe by notification
+    
     while(!commissionFinished) {
       await delay_ms(5000);
       num_of_entry++;
@@ -1511,6 +1531,7 @@ async function isCommissionFinished() {
         alert("Number of device(s) found: " + num_of_device_found);
         if(num_of_device_found == 0){
           reject("no device");
+          commissionFinished = true;
         }
         else if(num_of_device_found >= 1 && num_of_device_found <= 64){
           commissionFinished = true;
@@ -1540,13 +1561,13 @@ async function refreshFadingInfo(){
         asciiToUint8Array(control_gear_short_address.toString() + BLE_CMD_QUERY_FADE_TIME_AND_RATE + (0).toString())
       )
       .then(async (promise) => {
-        await delay_ms(200);
+        await delay_ms(300);
         getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
           .then((characteristic) =>{
           return characteristic.readValue()
           .then((dataview) => {
             log(dataview);
-            return dataview.getUint8(0);  
+            return dataview.getUint8(0);
           })
           .then((res) => {
             log(res);
@@ -1556,7 +1577,7 @@ async function refreshFadingInfo(){
             var children = document.getElementById("fade-time-menu").children;
             var i = 0;
             var found = false;
-            while(!found && i < children.length){
+            while(!found && i < children.length) {
               if(children[i].value === (fade_time_code).toString()){
                 fade_time = children[i].innerText;
                 found = true;
@@ -1578,6 +1599,10 @@ async function refreshFadingInfo(){
 
             loading_screen.style.display = "none";
             resolve("promise");
+          })
+          .catch((error) => {
+            log(error);
+            loading_screen.style.display = "none";
           });
         });
       });
@@ -1603,6 +1628,10 @@ async function ledBreathing(){
     await delay_ms(fade_time * 1000);
     if(led_breathing_toggle_state > 0){
       setTimeout(ledBreathing, 200);
+      in_breathing = true;
+    }
+    else{
+      in_breathing = false;
     }
   })
 }
