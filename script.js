@@ -423,7 +423,7 @@ read_control_gear.addEventListener("click", async function () {
     });
   })
   .catch((error) => {
-    alert(error);
+    log(error);
     loading_screen.style.display = "none";
   });
 });
@@ -1528,7 +1528,7 @@ async function isCommissionFinished() {
         var num_of_device_found = parseInt(str_buf);
         log(str_buf);
         log(num_of_device_found);
-        alert("Number of device(s) found: " + num_of_device_found);
+        // alert("Number of device(s) found: " + num_of_device_found);
         if(num_of_device_found == 0){
           reject("no device");
           commissionFinished = true;
