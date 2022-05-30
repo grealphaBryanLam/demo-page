@@ -39,7 +39,7 @@
 #firmware-update-type-container,
 #firmware-update-short-address-selection-container,
 #firmware-update-group-address-selection-container{
-  /* display: none; */
+  display: none;
 }
 
 #firmware-update-button{
@@ -60,6 +60,7 @@
 .debug,
 #ble-debug-characteristic-container{
   display: none;
+  /* padding-top: 10px; */
 }
 
 .led-status-echo,
