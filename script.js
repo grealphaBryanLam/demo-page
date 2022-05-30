@@ -1,24 +1,23 @@
 /** 
- * @version 0.6
+ * @version 0.7
  * @status debug
  * 
- * @TODO
- * 1. study how to use HTTPS (over Wi-Fi) on web browser to transfer file
- * 1. backend is needed to deal with file (e.g. MongoDB)
- *  - can be omitted since the firmware data would be discarded after refresh 
- * 2. free web hosting for try to perform firmware update via phone [e.g. GitHub Pages (not including file uploading)]
- * 3. CSS to beauity the layout
- * 
- * @Issue
- * 1. gattServer.connected / bluetoothDevice.gatt.connected is changed to false
- *    (connectivity)
- * 2. cannot upload new firmware on phone (showOpenFilePicker() is not supported on phone)
+ * @todo
+ * - add missing routine ENABLE DEVICE TYPE:
+ *  - ble client only need to get the device types for showing the info to user
+ *  - ble server execute the command ENABLE DEVICE TYPE before every firmware update command
+ *    (application extended command)   
  * 
  * @changelog
+ * ver 0.7
+ * - 
+ * 
  * ver 0.6
  * - fixed the issue of file path
  *  - use File System Access API instead of fetch()
  * - changed the handler for file selecting
+ * - loading screen overlay added
+ * - user can upload the firmware via phone/tablet
  * 
  * ver 0.5
  * - added breathing LED (auto-intensity changing) feature
@@ -49,6 +48,7 @@ const BLE_CMD_SET_ALL_CONTROL_GEAR_GROUP_ADDRESSES    = " 401 ";
 const BLE_CMD_GET_ALL_CONTROL_GEAR_GTIN               = " 402 ";
 const BLE_CMD_GET_ALL_CONTROL_GEAR_GROUP_ADDRESSES    = " 403 ";
 const BLE_CMD_CONTROL_GEAR_COMMISSIONING              = " 404 ";
+const BLE_CMD_GET_ALL_CONTROL_GEAR_DEVICE_TYPE        = " 405 ";
 const BLE_CMD_GET_MTU_SIZE                            = " 500 ";
 const BLE_CMD_BEGIN_FILE_TRANSFER                     = " 501 ";
 const BLE_CMD_END_FILE_TRANSFER                       = " 502 ";
@@ -166,6 +166,7 @@ let read_gtin_button = document.getElementById("read-gtin-button");
 let set_group_address_button = document.getElementById("set-group-address-button");
 let ble_cmd_end_file_transfer_button = document.getElementById("ble-cmd-end-file-transfer-button");
 let control_gear_commissioning_button = document.getElementById("control-gear-commissioning-button");
+let get_all_control_gear_device_types_button = document.getElementById("get-all-control-gear-device-types-button");
 
 connectButton.addEventListener("click", async function () {
   loading_screen.style.display = "block";
@@ -765,6 +766,15 @@ firmware_update_file_button.addEventListener("click", function() {
     document.getElementById("firmware-update-file-name").innerText = "No file chosen";
     firmware_data = null;
   });
+})
+
+get_all_control_gear_device_types_button.addEventListener("click", function(){
+  getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+  .then((characteristic) => {
+    characteristic.writeValueWithoutResponse(
+      asciiToUint8Array((0).toString() + BLE_CMD_GET_ALL_CONTROL_GEAR_DEVICE_TYPE + (0).toString())
+    )
+  })/* Get the reply */;
 })
 
 let deviceCache = null;
@@ -1472,6 +1482,7 @@ async function recoverBusInfoOnBLEServer() {
 
     // scan through the network require ~3.047s on MCU
     await delay_ms(3200);
+    log("Controller recovers short address(es)");
 
     getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
     .then((characteristic) => {
@@ -1480,7 +1491,18 @@ async function recoverBusInfoOnBLEServer() {
       )
     });
 
-    await delay_ms(1000);
+    await delay_ms(3200);
+    log("Controller recovers group address(es)");
+
+    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+    .then((characteristic) => {
+      characteristic.writeValueWithoutResponse(
+        asciiToUint8Array((0).toString() + BLE_CMD_GET_ALL_CONTROL_GEAR_DEVICE_TYPE + (0).toString())
+      )
+    })
+
+    await delay_ms(3200);
+    log("Controller recovers device type(s)");
 
     resolve("BLE server recovers the bus info");
   });
