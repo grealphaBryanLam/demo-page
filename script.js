@@ -212,6 +212,16 @@ connectButton.addEventListener("click", async function () {
 
       characteristic.addEventListener("characteristicvaluechanged", btCmdCharacteristicNotifyHandler);
     });
+
+    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_DEBUG_UUID)
+    .then((characteristic) => {
+      characteristic.startNotifications()
+      .then((characteristic) => {
+        time("wait DEBUG notification");
+      });
+
+      characteristic.addEventListener("characteristicvaluechanged", btDebugCharacteristicNotifyHandler);
+    })
   })
   .catch((error) => {
     loading_screen.style.display = "none";
@@ -411,8 +421,6 @@ read_control_gear.addEventListener("click", async function () {
   loading_screen.style.display = "block";
   controlGearCommisioning()
   .then(async (promise) => {
-    // read CMD characteristic every 5 seconds
-    // till the return value matches the expected
     return isCommissionFinished();
   })
   .then(async (promise) => {
@@ -1687,7 +1695,7 @@ async function isCommissionFinished() {
       await delay_ms(1000);
       log("commission finished: " + commissionFinished);
     }
-    log("escape from while loop");
+    alert("escape from while loop");
     resolve("commissioning completed");
   });
 }
@@ -1920,6 +1928,17 @@ async function btFileCharacteristicNotifyHandler(event){
 }
 
 async function btCmdCharacteristicNotifyHandler(event){
+  // event.target.value: str_buf
+  let dataview = event.target.value;
+  var str_buf = new TextDecoder().decode(dataview);
+  if(str_buf.toString() == "R"){
+    commissionFinished = true;
+    // log("notification received");
+    alert("notification value " + str_buf.toString());
+  }
+}
+
+async function btDebugCharacteristicNotifyHandler(event){
   // event.target.value: str_buf
   let dataview = event.target.value;
   var str_buf = new TextDecoder().decode(dataview);
