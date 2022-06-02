@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link href="https://www.w3schools.com/w3css/4/w3.css" rel="stylesheet">
+    <link href="w3.css" rel="stylesheet">
     <link href="styles.css" rel="stylesheet" />
   </head>
   <body>
@@ -17,10 +17,13 @@
     <div id="device-connection-container">
       <button id="connect" type="button">Connect</button>
       <button id="disconnect" type="button">Disconnect</button>
-      <div class="device-connection-echo" id="device-connection-display-text">
+    </div>
+
+    <div class="my-container w3-container w3-light-grey w3-padding-16" id="device-connection-text-box">
+      <div class="w3-left device-connection-echo" id="device-connection-display-text">
         Device:
       </div>
-      <div class="device-connection-echo" id="device-connection-display-status">
+      <div class="w3-right device-connection-echo" id="device-connection-display-status">
         Disconnected
       </div>
     </div>
@@ -60,7 +63,7 @@
       
       <div id="device-control-dashboard-container">
         <div id="selected-control-gear-info-container">
-          <div class="device-info-gtin" id="control-gear-gtin-display-text">GTIN: </div>
+          <div class="device-info-gtin " id="control-gear-gtin-display-text">GTIN: </div>
           <div class="device-info-gtin" id="control-gear-gtin"></div>
           
           <!-- ID can be omitted since some devices have no ID -->
