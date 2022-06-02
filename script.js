@@ -1661,41 +1661,41 @@ async function isCommissionFinished() {
     var entryTime = Date.now();
     // cheange the logic to esacpe by notification
     
-    // while(!commissionFinished) {
-    //   await delay_ms(5000);
-    //   num_of_entry++;
-    //   getCharacteristic(SERVICE_UUID, CHARACTERISTIC_DEBUG_UUID)
-    //   .then((characteristic) => {
-    //       return characteristic.readValue();
-    //   })
-    //   .then((dataview) => {
-    //     log(dataview);
-    //     return new TextDecoder().decode(dataview);
-    //   })
-    //   .then(async (str_buf) => {
-    //     var num_of_device_found = parseInt(str_buf);
-    //     log(str_buf);
-    //     log(num_of_device_found);
-    //     // alert("Number of device(s) found: " + num_of_device_found);
-    //     if(num_of_device_found == 0){
-    //       reject("no device");
-    //       commissionFinished = true;
-    //     }
-    //     else if(num_of_device_found >= 1 && num_of_device_found <= 64){
-    //       commissionFinished = true;
-    //       await delay_ms(5000 * (num_of_device_found - 1));
-    //       resolve("commissioning completed");
-    //     }
-    //     else{ /* Default msg: "Hello, world!" */
-    //     }
-    //   });
-    // }
-
-    while(!commissionFinished){
-      await delay_ms(1000);
-      log("commission finished: " + commissionFinished);
+    while(!commissionFinished) {
+      await delay_ms(5000);
+      num_of_entry++;
+      getCharacteristic(SERVICE_UUID, CHARACTERISTIC_DEBUG_UUID)
+      .then((characteristic) => {
+          return characteristic.readValue();
+      })
+      .then((dataview) => {
+        log(dataview);
+        return new TextDecoder().decode(dataview);
+      })
+      .then(async (str_buf) => {
+        var num_of_device_found = parseInt(str_buf);
+        log(str_buf);
+        log(num_of_device_found);
+        // alert("Number of device(s) found: " + num_of_device_found);
+        if(num_of_device_found == 0){
+          reject("no device");
+          commissionFinished = true;
+        }
+        else if(num_of_device_found >= 1 && num_of_device_found <= 64){
+          commissionFinished = true;
+          await delay_ms(5000 * (num_of_device_found - 1));
+          resolve("commissioning completed");
+        }
+        else{ /* Default msg: "Hello, world!" */
+        }
+      });
     }
-    alert("escape from while loop");
+
+    // while(!commissionFinished){
+    //   await delay_ms(1000);
+    //   log("commission finished: " + commissionFinished);
+    // }
+    // alert("escape from while loop");
     resolve("commissioning completed");
   });
 }
