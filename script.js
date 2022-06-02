@@ -1,16 +1,20 @@
 /** 
- * @version 0.7
+ * @version 0.8
  * @status debug
  * 
  * @todo
+ * - add routine to relocate short/group address by using GTIN and ID before renewBusInfoOnBLEServer()
  * - add missing routine ENABLE DEVICE TYPE:
  *  - ble client only need to get the device types for showing the info to user
  *  - ble server execute the command ENABLE DEVICE TYPE before every firmware update command
  *    (application extended command)   
  * 
  * @changelog
+ * ver 0.8
+ * - disable update firmware by short address (cannot distinguish control gears belong to same product series)
+ * 
  * ver 0.7
- * - 
+ * - added ENABLE DEVICE TYPE to the calling rountine
  * 
  * ver 0.6
  * - fixed the issue of file path
@@ -49,6 +53,8 @@ const BLE_CMD_GET_ALL_CONTROL_GEAR_GTIN               = " 402 ";
 const BLE_CMD_GET_ALL_CONTROL_GEAR_GROUP_ADDRESSES    = " 403 ";
 const BLE_CMD_CONTROL_GEAR_COMMISSIONING              = " 404 ";
 const BLE_CMD_GET_ALL_CONTROL_GEAR_DEVICE_TYPE        = " 405 ";
+const BLE_CMD_GET_ALL_CONTROL_GEAR_ID                 = " 406 ";
+const BLE_CMD_GET_CONTROL_GEAR_GROUP_GTIN             = " 407 ";
 const BLE_CMD_GET_MTU_SIZE                            = " 500 ";
 const BLE_CMD_BEGIN_FILE_TRANSFER                     = " 501 ";
 const BLE_CMD_END_FILE_TRANSFER                       = " 502 ";
@@ -57,8 +63,8 @@ const BLE_CMD_EXIT_INITIALIZATION                     = " 601 ";
 
 const ZERO_ASCII_CODE = 48;
 const ESP32_BLE_MTU_SIZE = 512;
-const GTIN_WORD_SIZE_IN_BYTES = 13;
-
+const GTIN_WORD_SIZE_IN_BYTES = 13; /* 12 bytes data + 1 byte blank character */
+const ID_WORD_SIZE_IN_BYTES = 17; /* 16 bytes data + 1 byte blank character */
 const FILE_PICKER_OPTIONS = {
   types:[
     {
@@ -96,6 +102,12 @@ var file_name;
 var control_gear_group_address;
 var control_gear_gtin;
 
+// 2022-06-01 Bryan
+var original_selected_gtin;
+
+// 2022-05-30 Bryan
+var control_gear_id;
+
 // 2022-05-18 Bryan
 // Not recommended to use 
 var firmware_update_short_address;
@@ -117,6 +129,9 @@ var firmware_data;
 // 2022-05-27 Bryan
 var request_fade_time_fail_counter = 0;
 var fading_disabled = false;
+
+// 2022-06-02 Bryan
+var commissionFinished = false;
 
 let connectButton = document.getElementById("connect");
 let disconnectButton = document.getElementById("disconnect");
@@ -169,29 +184,51 @@ let control_gear_commissioning_button = document.getElementById("control-gear-co
 let get_all_control_gear_device_types_button = document.getElementById("get-all-control-gear-device-types-button");
 
 connectButton.addEventListener("click", async function () {
+  var classList = document.getElementById("device-connection-text-box").classList;
+
   loading_screen.style.display = "block";
   connect()
   .then((promise) => {
     loading_screen.style.display = "none";
+    classList.remove("w3-light-grey", "w3-red");
+    classList.add("w3-light-green");    
     // GATT operation in progress
     getCharacteristic(SERVICE_UUID, CHARACTERISTIC_FILE_UUID)
     .then((characteristic) => {
       characteristic.startNotifications()
       .then((characteristic) => {
-        time("wait notification");
+        time("wait FILE notification");
       });
 
       characteristic.addEventListener("characteristicvaluechanged", btFileCharacteristicNotifyHandler);
     });
+
+    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+    .then((characteristic) => {
+      characteristic.startNotifications()
+      .then((characteristic) => {
+        time("wait CMD notification");
+      });
+
+      characteristic.addEventListener("characteristicvaluechanged", btCmdCharacteristicNotifyHandler);
+    });
   })
   .catch((error) => {
     loading_screen.style.display = "none";
+    classList.remove("w3-light-grey", "w3-light-green");
+    classList.add("w3-red");
   });
   
 });
 
 disconnectButton.addEventListener("click", async function () {
-  disconnect();
+  disconnect()
+  .then((promise) => {
+    var classList = document.getElementById("device-connection-text-box").classList;
+    log("caught error: connect()");
+    classList.remove("w3-light-green", "w3-light-red");
+    classList.add("w3-light-grey");
+  });
 });
 
 refreshStatus.addEventListener("click", async function () {
@@ -380,9 +417,9 @@ read_control_gear.addEventListener("click", async function () {
   })
   .then(async (promise) => {
     log("Commissioning completed");
-    /**
-     * @TODO cannot read the short address(es) after commissioning
-     */
+    /** 
+     * @checklist guanantee to get the short address of control gears
+    */
     getControlGearPresent()
     .then((num_of_availiable_control_gear) => {
       return num_of_availiable_control_gear;
@@ -391,7 +428,7 @@ read_control_gear.addEventListener("click", async function () {
       return setAllControlGearGroupAddress()
               .then((promise) => {
                 return promise;
-              })
+              });
     })
     .then(async (promise) => {
       // wait 1 sec to let BLE server ready for next command
@@ -477,84 +514,109 @@ firmware_update_button.addEventListener("click", async function () {
   // replace the fetch method with file system handle
   isValidFile()
   .then(async (data) => {
-    // format SPIFFS
-    formatSPIFFS(); 
+    // // format SPIFFS
+    // formatSPIFFS(); 
     
-    // check the initialization value from CMD characteristic
-    // wait for 25s. Device takes around 20s to initalize 
-    await delay_ms(25000);
+    // // check the initialization value from CMD characteristic
+    // // wait for 25s. Device takes around 20s to initalize 
+    // await delay_ms(25000);
 
     return reconnect()
     .then(async (resolve) => {
       // get MTU size from the MCU
       return getMTUsize()
       .then(async (promise) => {
-        return recoverBusInfoOnBLEServer()
-          .then((promise) => {
-            /** Divide the data into chunks based on MTU size 
-             * expected test result (test.hex): 
-             * => 12393 Bytes / (MTU size)
-             * => 25 data chunks to transfer the test file
-             **/ 
-            return divideDataIntoChunks(data, ble_mtu_size);
+        /**
+         * @NOTE potential issue of the update process the re-generated short address
+         *        routine should be get back the new value from the controller
+        */
+        // Set all bus info
+        return renewBusInfoOnBLEServer()
+          .then(async (promise) => {
+            /* Get all bus info */
+            getAllControlGearGTIN()
+            .then(async (promise) => {
+              await delay_ms(NORMAL_DELAY_TIME);
+              // return getAllControlGearID()
+              // .then(async (promise) => {
+                // await delay_ms
+              return getAllControlGearGroupAddress();
+              // })
+            })
+            .then(async (promise) => {
+              log("change FW update address");
+              return updateFWUGroupAddress()
+              .then(async (promise) =>{
+                /** Divide the data into chunks based on MTU size 
+                 * expected test result (test.hex): 
+                 * => 12393 Bytes / (MTU size)
+                 * => 25 data chunks to transfer the test file
+                 */ 
+                return divideDataIntoChunks(data, ble_mtu_size);
+              })
+              .then(async (chunks) => {
+                log(chunks);
+                await delay_ms(NORMAL_DELAY_TIME);
+            
+                // send cmd to indicate START file transfer 
+                getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+                .then((characteristic) => {
+                  // characteristic.writeValueWithoutResponse(asciiToUint8Array(control_gear_short_address.toString() + " 501 0"));
+                  characteristic.writeValueWithoutResponse(
+                    asciiToUint8Array(firmware_update_address.toString() + BLE_CMD_BEGIN_FILE_TRANSFER + (0).toString())
+                  );
+                });
+            
+                await delay_ms(300);
+            
+                /* Send data chunks */
+                log("chunk length: " + chunks.length);
+                for(var i = 0; i < chunks.length; i++) {
+                  getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+                  .then((characteristic) => {
+                    characteristic.writeValueWithResponse(chunks[i]);
+                    // add loading screen or show alert 
+                    // also disable other buttons to aviod interrupt
+                  });
+                  
+                  await delay_ms(1000);
+                }
+            
+                /* Send END transfer command*/
+                getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+                .then((characteristic) => {
+                  // characteristic.writeValueWithoutResponse(asciiToUint8Array(control_gear_short_address.toString() + " 502 0"));
+                  log("END file transfer");
+                  return characteristic.writeValueWithResponse(
+                    asciiToUint8Array(firmware_update_address.toString() + BLE_CMD_END_FILE_TRANSFER + (0).toString())
+                  );
+                })
+                .then((promise) => {
+                  log(promise);
+            
+                  // getCharacteristic(SERVICE_UUID, CHARACTERISTIC_FILE_UUID)
+                  // .then((characteristic) => {
+                  //   characteristic.startNotifications()
+                  //   .then((characteristic) => {
+                  //     time("wait notification");
+                  //   });
+            
+                  //   characteristic.addEventListener("characteristicvaluechanged", btFileCharacteristicNotifyHandler);
+                  // });
+                });
+              });
+            });
+
           });
       });
     })
     .catch((error) => {
       alert("error caught: reconnect");
     });
-  })
-  .then(async (chunks) => {
-
-
-    // send cmd to indicate START file transfer 
-    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
-    .then((characteristic) => {
-      // characteristic.writeValueWithoutResponse(asciiToUint8Array(control_gear_short_address.toString() + " 501 0"));
-      characteristic.writeValueWithoutResponse(
-        asciiToUint8Array(firmware_update_address.toString() + BLE_CMD_BEGIN_FILE_TRANSFER + (0).toString())
-      );
-    });
-
-    await delay_ms(300);
-
-    /* Send data chunks */
-    log("chunk length: " + chunks.length);
-    for(var i = 0; i < chunks.length; i++) {
-      getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
-      .then((characteristic) => {
-        characteristic.writeValueWithResponse(chunks[i]);
-        // add loading screen or show alert 
-        // also disable other buttons to aviod interrupt
-      });
-      
-      await delay_ms(1000);
-    }
-
-    /* Send END transfer command*/
-    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
-    .then((characteristic) => {
-      // characteristic.writeValueWithoutResponse(asciiToUint8Array(control_gear_short_address.toString() + " 502 0"));
-      log("END file transfer");
-      return characteristic.writeValueWithResponse(
-        asciiToUint8Array(firmware_update_address.toString() + BLE_CMD_END_FILE_TRANSFER + (0).toString())
-      );
-    })
-    .then((promise) => {
-      log(promise);
-
-      // getCharacteristic(SERVICE_UUID, CHARACTERISTIC_FILE_UUID)
-      // .then((characteristic) => {
-      //   characteristic.startNotifications()
-      //   .then((characteristic) => {
-      //     time("wait notification");
-      //   });
-
-      //   characteristic.addEventListener("characteristicvaluechanged", btFileCharacteristicNotifyHandler);
-      // });
-    });
   });
 
+  /* clear loading screen when BT notification received */
+  /* also update all options in menus */
 });
 
 firmware_update_file.addEventListener("change", handleFiles, false);
@@ -611,6 +673,12 @@ firmware_update_group_address_select_menu.addEventListener("change", function() 
   firmware_update_short_address = "255";
   // dropdown.value => firmware_udate_group_address
   firmware_update_group_address = dropdown.value;
+
+  /** 
+   * @todo save the GTIN
+  */
+  original_selected_gtin = control_gear_gtin[dropdown.value];
+
   // show update button
   document.getElementById("firmware-update-button")
   .style.display = "block";
@@ -663,8 +731,8 @@ fade_time_menu.addEventListener("change", async function() {
     log(fade_time_code);
     log(typeof(fade_time_code));
     getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
-    .then((characteristic) => {
-      characteristic.writeValueWithoutResponse(
+    .then(async (characteristic) => {
+      return characteristic.writeValueWithoutResponse(
         asciiToUint8Array(control_gear_short_address.toString() + BLE_CMD_SET_FADE_TIME + fade_time_code)
       );
     })
@@ -758,7 +826,8 @@ firmware_update_file_button.addEventListener("click", function() {
       .then((array_buf) => {
         log(array_buf);
         firmware_data = array_buf;
-        document.getElementById("firmware-update-type-container").style.display = "block";
+        // document.getElementById("firmware-update-type-container").style.display = "block";
+        document.getElementById("firmware-update-group-address-selection-container").style.display = "block";
       })
     })
   })
@@ -786,6 +855,7 @@ async function connect() {
     .then((gattServer) => {
       log("Device: " + gattServer.connected);
       if (gattServer.connected) {
+        document.getElementById("control-panel-container").style.display = "block";
         document.getElementById("read-control-gear-container").style.display = "block";
       }
       else {
@@ -806,27 +876,30 @@ async function connect() {
 
 async function disconnect() {
   // sometimes cannot disconnect device. Review needed.
-  loading_screen.style.display = "block";
-  gatt_disconnect()
-  .then(
-    (disconnected) => {
-      document.getElementById("read-control-gear-container").style.display = "none";
-      document.getElementById("selected-control-gear-container").style.display = "none";
-      document.getElementById("device-control-dashboard-container").style.display = "none";
-
-      loading_screen.style.display = "none";
-    },
-    (error) => {
-      if (!bluetoothDevice) {
-        log("No need to disconnect.");
+  return new Promise((resolve, reject) => {
+    loading_screen.style.display = "block";
+    gatt_disconnect()
+    .then(
+      (disconnected) => {
+        document.getElementById("read-control-gear-container").style.display = "none";
+        document.getElementById("selected-control-gear-container").style.display = "none";
+        document.getElementById("device-control-dashboard-container").style.display = "none";
+  
+        loading_screen.style.display = "none";
+      },
+      (error) => {
+        if (!bluetoothDevice) {
+          log("No need to disconnect.");
+        }
+        document.getElementById("read-control-gear-container").style.display = "none";
+        document.getElementById("selected-control-gear-container").style.display = "none";
+        document.getElementById("device-control-dashboard-container").style.display = "none";
+  
+        loading_screen.style.display = "none";
       }
-      document.getElementById("read-control-gear-container").style.display = "none";
-      document.getElementById("selected-control-gear-container").style.display = "none";
-      document.getElementById("device-control-dashboard-container").style.display = "none";
-
-      loading_screen.style.display = "none";
-    }
-  );
+    );
+    resolve("disconnected");
+  });
 }
 
 // 2022-05-13 Bryan
@@ -951,6 +1024,11 @@ async function getService(service_uuid) {
         alert(error);
         document.getElementById("device-connection-display-status").innerHTML = "Disconnected";
         document.getElementById("control-panel-container").style.display = "none";
+
+        var classList = document.getElementById("device-connection-text-box").classList;
+        classList.remove("w3-light-grey", "w3-light-green");
+        classList.add("w3-red");
+        
         reject(error);
       });
   });
@@ -1081,12 +1159,18 @@ async function getControlGearPresent() {
       .appendChild(drop_down_menu_option);
 
     /**
-     * @TODO clear all options in firmware update short address
+     * clear all options in firmware update short address
      */
+    document
+    .getElementById("firmware-update-short-address-selection-menu")
+    .replaceChildren();
 
     /**
-     * @TODO clear all options in firwmare udpate group address (with GTIN)
+     * clear all options in firwmare udpate group address (with GTIN)
      */
+    document
+      .getElementById("firmware-update-group-address-selection-menu")
+      .replaceChildren();
 
     // send command to ESP32 DALI gateway
     log("Ask ESP32 to scan through network, find all short address(es)");
@@ -1103,9 +1187,6 @@ async function getControlGearPresent() {
     // changed 
     await delay_ms(3200);
 
-    log("Read the reply");
-    await delay_ms(100);
-
     getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
     .then((characteristic) => {
       return characteristic.readValue();
@@ -1116,49 +1197,25 @@ async function getControlGearPresent() {
       return new TextDecoder().decode(dataview);
     })
     .then((str_buf) => {
-      /* parse string into word, then convert string to Uint8Array */
-      var start_index = -1;
-      var end_index = start_index;
-      var sliced_word_buf = new Array();
-      for (var i = 0; i < str_buf.length; i++) {
-        end_index = i;
-        if (str_buf[i] == " " || i == str_buf.length - 1) {
-          // DEBUG
-          // log("start index: " + start_index);
-          // log("end index: " + end_index);
-          sliced_word_buf.push(str_buf.slice(start_index + 1, end_index));
-          start_index = i;
+      parseControlGearShortAddress(str_buf)
+      .then((availiable_control_gear) => {
+        // append each item in array to dropdown menu
+        var drop_down_menu_option;
+        var option_index = 0;
+        for (var i = 0; i < availiable_control_gear.length; i++) {
+          drop_down_menu_option = document.createElement("option");
+          drop_down_menu_option.id = "option-" + option_index;
+          drop_down_menu_option.textContent = availiable_control_gear[i];
+          drop_down_menu_option.value = availiable_control_gear[i];
+          document
+            .getElementById("control-gear-select-menu")
+            .appendChild(drop_down_menu_option);
+
+          option_index = option_index + 1;
         }
-      }
-      
-      // DEBUG
-      // log(sliced_word_buf);
 
-      availiable_control_gear = new Array();
-      for (var i = 0; i < sliced_word_buf.length; i++) {
-        availiable_control_gear.push(parseInt(sliced_word_buf[i]));
-      }
-      /* parse END */
-
-      return availiable_control_gear;
-    })
-    .then((availiable_control_gear) =>{
-      // append each item in array to dropdown menu
-      var drop_down_menu_option;
-      var option_index = 0;
-      for (var i = 0; i < availiable_control_gear.length; i++) {
-        drop_down_menu_option = document.createElement("option");
-        drop_down_menu_option.id = "option-" + option_index;
-        drop_down_menu_option.textContent = availiable_control_gear[i];
-        drop_down_menu_option.value = availiable_control_gear[i];
-        document
-          .getElementById("control-gear-select-menu")
-          .appendChild(drop_down_menu_option);
-
-        option_index = option_index + 1;
-      }
-
-      resolve(availiable_control_gear.length);
+        resolve(availiable_control_gear.length);
+      });
     });
   });
   
@@ -1271,7 +1328,7 @@ function divideDataIntoChunks(data, ble_mtu_size){
 
 function formatSPIFFS() {
   getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
-  .then((characteristic) =>{
+  .then((characteristic) => {
     characteristic.writeValueWithoutResponse(
       /* only command word is meaningful, address word and value word are discarded */
       asciiToUint8Array((0).toString() + BLE_CMD_FORMAT_SPIFFS + (0).toString())
@@ -1321,7 +1378,7 @@ async function getAllControlGearGTIN(){
   return new Promise(async(resolve, reject) => {
     await getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
     // tell MCU to prepare all GTIN 
-    .then((characteristic) => {
+    .then(async (characteristic) => {
       return characteristic.writeValueWithoutResponse(
         asciiToUint8Array((0).toString() + BLE_CMD_GET_ALL_CONTROL_GEAR_GTIN + (0).toString())
       );
@@ -1338,13 +1395,13 @@ async function getAllControlGearGTIN(){
       .then((dataview) => {
         log("dataview");
         log(dataview);
-        // the maximum size = 448 Bytes (64 GTINs, separated by space character. last byte should be space character)
         return new TextDecoder().decode(dataview);
       })
       .then((str_buf) => {
         var i = 0;
         log("str buf length: " + str_buf.length);
-        var num_of_word = Math.ceil(str_buf.length / GTIN_WORD_SIZE_IN_BYTES);
+        // If the data transferred is not a whole word, discard that word 
+        var num_of_word = Math.floor(str_buf.length / GTIN_WORD_SIZE_IN_BYTES);
         log("Number of GTIN: " + num_of_word);
 
         // reset the array
@@ -1363,8 +1420,9 @@ async function getAllControlGearGTIN(){
 async function getAllControlGearGroupAddress(){
   return new Promise(async (resolve, reject) => {
     getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
-    .then((characteristic) => {
-      characteristic.writeValueWithoutResponse(
+    .then(async (characteristic) => {
+      time("Send BLE Cmd: " + BLE_CMD_GET_ALL_CONTROL_GEAR_GROUP_ADDRESSES);
+      return characteristic.writeValueWithoutResponse(
         asciiToUint8Array((0).toString() + BLE_CMD_GET_ALL_CONTROL_GEAR_GROUP_ADDRESSES + (0).toString())
       );
       // write completed
@@ -1373,6 +1431,7 @@ async function getAllControlGearGroupAddress(){
       // wait for 1 sec for device ready
       await delay_ms(1000);
       // get reply
+      time("Get reply");
       getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
       .then((characteristic) => {
         return characteristic.readValue();
@@ -1468,39 +1527,61 @@ async function updateFirmwareUpdateGroupAddressMenu(){
   });
 }
 
-async function recoverBusInfoOnBLEServer() {
+async function renewBusInfoOnBLEServer() {
   return new Promise(async(resolve, reject) => {
     // let the BLE server get the required bus info first
     // All data on the server side have been erased after formmating SPIFFS
-    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+    await getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
     .then((characteristic) => {
+      /** BLE_CMD_GET_ALL_CONTROL_GEAR_SHORT_ADDRESSES: update the short addresses, GTIN
+       * (and ID)
+      */
       return characteristic.writeValueWithoutResponse(
         // asciiToUint8Array("0 400 0")
         asciiToUint8Array((0).toString() + BLE_CMD_GET_ALL_CONTROL_GEAR_SHORT_ADDRESSES + (0).toString())
       );
+    })
+    .then(async(promise) => {
+      // scan through the network require ~3.047s on MCU
+      // update the dropdown menu
+      await delay_ms(3200);
+      log("Controller recovers short address(es)");
+      getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+      .then((characteristic) => {
+        characteristic.readValue()
+        .then((dataview) => {
+          return new TextDecoder().decode(dataview);
+        })
+        .then(async (str_buf) => {
+          return parseControlGearShortAddress(str_buf)
+            .then((availiable_control_gear) => {
+              time("get all short addresses");
+              return availiable_control_gear;
+            });
+        });
+      });
     });
 
-    // scan through the network require ~3.047s on MCU
     await delay_ms(3200);
-    log("Controller recovers short address(es)");
 
-    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
-    .then((characteristic) => {
-      characteristic.writeValueWithoutResponse(
-        asciiToUint8Array((0).toString() + BLE_CMD_SET_ALL_CONTROL_GEAR_GROUP_ADDRESSES + (0).toString())
-      )
-    });
+    await setAllControlGearGroupAddress()
+        .then(async (promise) => {
+          log("Controller recovers group address(es)");
+          await delay_ms(NORMAL_DELAY_TIME);
+          getAllControlGearGroupAddress();
+        });
+    
 
-    await delay_ms(3200);
-    log("Controller recovers group address(es)");
+
+    await delay_ms(NORMAL_DELAY_TIME);
 
     getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
     .then((characteristic) => {
       characteristic.writeValueWithoutResponse(
         asciiToUint8Array((0).toString() + BLE_CMD_GET_ALL_CONTROL_GEAR_DEVICE_TYPE + (0).toString())
       )
-    })
-
+    });
+    // scan through the network require ~3.047s on MCU
     await delay_ms(3200);
     log("Controller recovers device type(s)");
 
@@ -1545,7 +1626,8 @@ function handleFiles() {
       firmware_data = array_buf;
       log(firmware_data);
     })
-    document.getElementById("firmware-update-type-container").style.display = "block";
+    // document.getElementById("firmware-update-type-container").style.display = "block";
+    document.getElementById("firmware-update-group-address-selection-container").style.display = "block";
     // document.getElementById("firmware-update-short-address-selection-container")
     // document.getElementById("firmware-update-group-address-selection-container")
     // document.getElementById("firmware-update-button").style.display = "block";
@@ -1566,40 +1648,47 @@ async function controlGearCommisioning(){
 
 async function isCommissionFinished() {
   return new Promise(async (resolve, reject) => {
-    var commissionFinished = false;
+    commissionFinished = false;
     var num_of_entry = 0;
     var entryTime = Date.now();
     // cheange the logic to esacpe by notification
     
-    while(!commissionFinished) {
-      await delay_ms(5000);
-      num_of_entry++;
-      getCharacteristic(SERVICE_UUID, CHARACTERISTIC_DEBUG_UUID)
-      .then((characteristic) => {
-          return characteristic.readValue();
-      })
-      .then((dataview) => {
-        log(dataview);
-        return new TextDecoder().decode(dataview);
-      })
-      .then(async (str_buf) => {
-        var num_of_device_found = parseInt(str_buf);
-        log(str_buf);
-        log(num_of_device_found);
-        // alert("Number of device(s) found: " + num_of_device_found);
-        if(num_of_device_found == 0){
-          reject("no device");
-          commissionFinished = true;
-        }
-        else if(num_of_device_found >= 1 && num_of_device_found <= 64){
-          commissionFinished = true;
-          await delay_ms(5000 * (num_of_device_found - 1));
-          resolve("commissioning completed");
-        }
-        else{ /* Default msg: "Hello, world!" */
-        }
-      });
+    // while(!commissionFinished) {
+    //   await delay_ms(5000);
+    //   num_of_entry++;
+    //   getCharacteristic(SERVICE_UUID, CHARACTERISTIC_DEBUG_UUID)
+    //   .then((characteristic) => {
+    //       return characteristic.readValue();
+    //   })
+    //   .then((dataview) => {
+    //     log(dataview);
+    //     return new TextDecoder().decode(dataview);
+    //   })
+    //   .then(async (str_buf) => {
+    //     var num_of_device_found = parseInt(str_buf);
+    //     log(str_buf);
+    //     log(num_of_device_found);
+    //     // alert("Number of device(s) found: " + num_of_device_found);
+    //     if(num_of_device_found == 0){
+    //       reject("no device");
+    //       commissionFinished = true;
+    //     }
+    //     else if(num_of_device_found >= 1 && num_of_device_found <= 64){
+    //       commissionFinished = true;
+    //       await delay_ms(5000 * (num_of_device_found - 1));
+    //       resolve("commissioning completed");
+    //     }
+    //     else{ /* Default msg: "Hello, world!" */
+    //     }
+    //   });
+    // }
+
+    while(!commissionFinished){
+      await delay_ms(1000);
+      log("commission finished: " + commissionFinished);
     }
+    log("escape from while loop");
+    resolve("commissioning completed");
   });
 }
 
@@ -1787,7 +1876,7 @@ function isValidFile(){
   });
 }
 
-function btFileCharacteristicNotifyHandler(event){
+async function btFileCharacteristicNotifyHandler(event){
   // event.target.value: str_buf
   let dataview = event.target.value;
   var str_buf = new TextDecoder().decode(dataview);
@@ -1804,6 +1893,22 @@ function btFileCharacteristicNotifyHandler(event){
   else if(str_buf.toString() == "F"){
     alert("BT notification: Firmware update failed");
   }
+
+  alert("Address changed. Please scan the devices again.");
+
+  if(str_buf.toString() == "B"
+    || str_buf.toString() == "Y"
+    || str_buf.toString() == "G"
+    || str_buf.toString() == "F"
+    ){
+    // reset the state instead of update the info. 
+    // The selected target may be different from the original one
+    // await updateBusInfoOnScreen();
+    document.getElementById("selected-control-gear-container").style.display = "none";
+    document.getElementById("device-control-dashboard-container").style.display = "none";
+
+  }
+
   loading_screen.style.display = "none";
   // getCharacteristic(SERVICE_UUID, CHARACTERISTIC_FILE_UUID)
   // .then((characteristic) => {
@@ -1813,3 +1918,186 @@ function btFileCharacteristicNotifyHandler(event){
   //   });
   // });
 }
+
+async function btCmdCharacteristicNotifyHandler(event){
+  // event.target.value: str_buf
+  let dataview = event.target.value;
+  var str_buf = new TextDecoder().decode(dataview);
+  if(str_buf.toString() == "R"){
+    commissionFinished = true;
+    log("notification received");   
+  }
+}
+
+async function updateBusInfoOnScreen(){
+  /**
+   * @TODO complete the part og refresh GTIN, ID and slider
+  */
+  return new Promise((resolve, reject) => {
+    /** refresh all dropdown menu containing bus info 
+     *  control-gear-select-menu
+     *  firmware-update-short-address-selection-menu
+     *  firmware-update-group-address-selection-menu
+    */
+
+    /* control-gear-select-menu */
+    updateControlGearSelectMenu(availiable_control_gear)
+    .then((promise) => {
+      refreshControlDashboard()
+      .then(async (brightness) => {
+        await delay_ms(200);
+        refreshFadingInfo()
+        .then((promise) => {
+          updateFirmwareUpdateShortAddressMenu().then((promise) => {
+            updateFirmwareUpdateGroupAddressMenu().then((promise) => {
+              return promise;
+            })
+          });
+        });
+      });  
+    });
+    /** refresh GTIN and ID showing 
+     * selected-control-gear-info-container
+    */
+    document.getElementById("control-gear-gtin").innerHTML  = "0x" + control_gear_gtin[control_gear_short_address].toString(16).toUpperCase();
+    /* @NOTE: ID cannot be fetched */
+    // document.getElementById("control-gear-id").innerHTML = ;
+    /** refresh DAPC value and fade time setting 
+     * led-status
+     * led-brightness
+     * fading-status
+    */
+    document.getElementById("control-gear-id").innerHTML = "0x" + control_gear_id[control_gear_short_address].toString(16).toUpperCase();
+
+    /** refresh slider value 
+     * led-brightness-slider
+    */
+
+    resolve("Info updated");
+  });
+}
+
+async function getAllControlGearID(){
+  /**
+   * @TODO send cmd, then get all control gear ID
+  */
+  return new Promise(async (resolve, reject) => {
+    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+      .then(async (characteristic) => {
+        return characteristic.writeValueWithoutResponse(
+          asciiToUint8Array((0).toString() + BLE_CMD_GET_ALL_CONTROL_GEAR_ID + (0).toString())
+        );
+      })
+      .then(async (promise) => {
+        /**
+         * wait until all control gear ID found,
+         * and the result has been saved in the characteristic
+         */
+        await delay_ms(/* N ms */);
+
+        getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+        .then((characteristic) => {
+          return characteristic.readValue();
+        })
+        .then((dataview) => {
+          log("dataview");
+          log(dataview);
+          return new TextDecoder().decode(dataview);
+        })
+        .then((str_buf) => {
+          var i = 0;
+          log("str buf length: " + str_buf.length);
+          // If the data transferred is not a whole word, discard that word 
+          var num_of_word = Math.floor(str_buf.length / ID_WORD_SIZE_IN_BYTES);
+          log("Number of GTIN: " + num_of_word);
+  
+          // reset the array
+          control_gear_id = new Array();
+  
+          while(i < (num_of_word * ID_WORD_SIZE_IN_BYTES)){
+            control_gear_id.push((parseInt(str_buf.slice(i, (i + ID_WORD_SIZE_IN_BYTES - 1)), 16)));
+            i = i + ID_WORD_SIZE_IN_BYTES;
+          }
+          resolve("Get ID");
+        });
+      })
+  });
+}
+
+async function parseControlGearShortAddress(str_buf){
+  return new Promise(async (resolve, reject) => {
+    /* parse string into word, then convert string to Uint8Array */
+    var start_index = -1;
+    var end_index = start_index;
+    var sliced_word_buf = new Array();
+    for (var i = 0; i < str_buf.length; i++) {
+      end_index = i;
+      if (str_buf[i] == " " || i == str_buf.length - 1) {
+        // DEBUG
+        // log("start index: " + start_index);
+        // log("end index: " + end_index);
+        sliced_word_buf.push(str_buf.slice(start_index + 1, end_index));
+        start_index = i;
+      }
+    }
+    /* available_control_gear is the array of short addresses */
+    availiable_control_gear = new Array();
+    var num_of_availiable_control_gear = 0;
+    for (var i = 0; i < sliced_word_buf.length; i++) {
+      availiable_control_gear.push(parseInt(sliced_word_buf[i]));
+      num_of_availiable_control_gear++;
+    }
+    /* parse END */
+    log("num of control gear found: " + num_of_availiable_control_gear);
+    resolve(availiable_control_gear);
+  });
+}
+
+function updateFWUGroupAddress(){
+  /**
+   * BLE server has to send the FW update to new group address (group address after
+   * formatting SPIFFS)
+   * 
+   * Prerequsires:
+   * - New bus info is stored to this ble client
+   * 
+   * Procedure:
+   * lookup the new group address for FW update by using GTIN 
+   */
+  return new Promise((resolve, reject) => {
+    var i = 0;
+    var matchedGroupFound = false; 
+    while(i < control_gear_gtin.length && !matchedGroupFound) {
+      if(control_gear_gtin[i] == original_selected_gtin){
+        // arbritary control gear with the matched gtin is found
+        firmware_update_group_address = control_gear_group_address[i];
+        firmware_update_address = firmware_update_group_address + CONTROL_GEAR_WRAPPED_GROUP_0_ADDRESS;
+        matchedGroupFound = true;
+      }
+      i++;
+    }
+    log("New firmware update group address: " + firmware_update_group_address);
+    resolve("FW update group address updated");
+  });
+}
+
+async function updateControlGearSelectMenu(){
+  return new Promise((resolve, reject) => {
+    // append each item in array to dropdown menu
+    var drop_down_menu_option;
+    var option_index = 0;
+    for (var i = 0; i < availiable_control_gear.length; i++) {
+      drop_down_menu_option = document.createElement("option");
+      drop_down_menu_option.id = "option-" + option_index;
+      drop_down_menu_option.textContent = availiable_control_gear[i];
+      drop_down_menu_option.value = availiable_control_gear[i];
+      document
+        .getElementById("control-gear-select-menu")
+        .appendChild(drop_down_menu_option);
+
+      option_index = option_index + 1;
+    }
+    resolve("control gear menu updated");
+  });
+}
+
