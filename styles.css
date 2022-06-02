@@ -6,10 +6,14 @@
   display: inline;
 }
 
-#device-connection-display-text,
+/* #device-connection-display-text, */
 #control-gear-id-display-text,
 #control-gear-group-address-display-text {
   padding-left: 50px;
+}
+
+#device-connection-text-box {
+  margin-top: 10px;
 }
 
 /* Dashboard */
@@ -19,7 +23,7 @@
 
 #read-control-gear-container{
   display: none;
-  padding-top: 30px;
+  margin-top: 10px;
 }
 
 #selected-control-gear-container{
@@ -72,6 +76,11 @@
 .led-brightness-control-container {
   padding-top: 10px;
   padding-bottom: 10px;
+}
+
+.my-container{
+  width: 25%;
+  height: 2%;
 }
 
 /* slider */
