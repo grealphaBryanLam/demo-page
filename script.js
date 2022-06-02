@@ -1925,7 +1925,8 @@ async function btCmdCharacteristicNotifyHandler(event){
   var str_buf = new TextDecoder().decode(dataview);
   if(str_buf.toString() == "R"){
     commissionFinished = true;
-    log("notification received");   
+    // log("notification received");
+    alert("notification value" + str_buf.toString());
   }
 }
 
