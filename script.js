@@ -3,15 +3,15 @@
  * @status debug
  * 
  * @todo
- * - add routine to relocate short/group address by using GTIN and ID before renewBusInfoOnBLEServer()
- * - add missing routine ENABLE DEVICE TYPE:
- *  - ble client only need to get the device types for showing the info to user
- *  - ble server execute the command ENABLE DEVICE TYPE before every firmware update command
- *    (application extended command)   
+ * - fix the issue that client cannot perform some action by the time receiving new characteristic
+ * - renew short/group address by using GTIN and ID before renewBusInfoOnBLEServer()
+ *  - reset the layout after the firmware update process is completed 
+ * - (optional) show device type of the selected control gear:
  * 
  * @changelog
  * ver 0.8
  * - disable update firmware by short address (cannot distinguish control gears belong to same product series)
+ * - added rountine updateFWUGroupAddress(): renew the firmware update's group address after commissioning
  * 
  * ver 0.7
  * - added ENABLE DEVICE TYPE to the calling rountine
@@ -84,6 +84,10 @@ const ERROR_FADE_TIME_MISSING = -3;
 const GOT_FADE_TIME = 1;
 
 const NORMAL_DELAY_TIME = 200;
+
+const COMMISSIONING_TIME_LIMIT = (15 * 60 * 1000);
+
+const DEBUG_SHORT_ADDRESS = 0;
 
 var bluetoothDevice;
 var bluetoothDeviceGattServer;
@@ -182,6 +186,7 @@ let set_group_address_button = document.getElementById("set-group-address-button
 let ble_cmd_end_file_transfer_button = document.getElementById("ble-cmd-end-file-transfer-button");
 let control_gear_commissioning_button = document.getElementById("control-gear-commissioning-button");
 let get_all_control_gear_device_types_button = document.getElementById("get-all-control-gear-device-types-button");
+let http_post_send_data = document.getElementById("http-post-send-data");
 
 connectButton.addEventListener("click", async function () {
   var classList = document.getElementById("device-connection-text-box").classList;
@@ -270,11 +275,10 @@ ledOn.addEventListener("click", async function () {
       characteristic.writeValueWithoutResponse(
         asciiToUint8Array(control_gear_short_address.toString() + " 300 254")
       );
-      // characteristic.writeValueWithoutResponse(asciiToUint8Array("0 300 254"));
     }
   );
   
-  await delay_ms(100);
+  await delay_ms(NORMAL_DELAY_TIME /* 100 */);
   target_light_level = MAX_BRIGHTNESS;
 
   refreshControlDashboard()
@@ -290,11 +294,10 @@ ledOff.addEventListener("click", async function () {
       characteristic.writeValueWithoutResponse(
         asciiToUint8Array(control_gear_short_address.toString() + " 300 0")
       );
-      // characteristic.writeValueWithoutResponse(asciiToUint8Array("0 300 0"));
     }
   );
 
-  await delay_ms(100);
+  await delay_ms(NORMAL_DELAY_TIME /* 100 */);
   target_light_level = 0;
 
   refreshControlDashboard()
@@ -363,7 +366,7 @@ lightDown.addEventListener("click", async function () {
     }
   );
 
-  await delay_ms(100);
+  await delay_ms(NORMAL_DELAY_TIME /* 100 */);
 
   refreshControlDashboard()
   .then((brightness) => {
@@ -381,7 +384,7 @@ lightUp.addEventListener("click", async function () {
     }
   );
 
-  await delay_ms(100);
+  await delay_ms(NORMAL_DELAY_TIME /* 100 */);
 
   refreshControlDashboard()
   .then((brightness) => {
@@ -410,7 +413,11 @@ led_brightness_slider.addEventListener("change", async function () {
       characteristic.writeValueWithoutResponse(data_buf);
   });
 
-  await delay_ms(100);
+  /**
+   * the MCU cannot parse command (non-blocking)
+   * cause: (1) not enough time for the MCU to compute before new command arrives
+  */
+  await delay_ms(NORMAL_DELAY_TIME /* original: 100 ms */);
 
   refreshControlDashboard()
   .then((brightness) => {
@@ -523,11 +530,11 @@ firmware_update_button.addEventListener("click", async function () {
   isValidFile()
   .then(async (data) => {
     // // format SPIFFS
-    // formatSPIFFS(); 
+    formatSPIFFS(); 
     
     // // check the initialization value from CMD characteristic
     // // wait for 25s. Device takes around 20s to initalize 
-    // await delay_ms(25000);
+    await delay_ms(25000);
 
     return reconnect()
     .then(async (resolve) => {
@@ -854,6 +861,44 @@ get_all_control_gear_device_types_button.addEventListener("click", function(){
   })/* Get the reply */;
 })
 
+http_post_send_data.addEventListener("click", async function(){
+  // fetch("./data/" + file_name)
+  // .then(async (response) => {
+  //   log(response);
+  //   var data = response.arrayBuffer();
+  //   await delay_ms(1000);
+  //   log(data);
+  //   return data;
+  // })
+  // .catch((error) => {
+  //   alert(error.message);
+  // })
+  const url = "http://192.168.4.1";
+
+  isValidFile()
+  .then((data) => {
+    var headers_obj = new Headers([
+      ["Content-Type", "text/plain"],
+      ["Content-Length", data.byteLength.toString()]
+    ]);
+  
+    const init_obj = {
+      method: "POST",
+      headers: headers_obj,
+      body: data,
+      mode: "no-cors"
+    };
+  
+    fetch(url, init_obj)
+    .then((response) => {
+      alert(response);
+    });
+  })
+  .catch((error) => {
+    alert(error);
+  });
+})
+
 let deviceCache = null;
 
 async function connect() {
@@ -938,7 +983,7 @@ async function reconnect() {
 
 async function requestBluetoothDevice() {
   let options = {
-    filters: [{ namePrefix: "ESP32" }],
+    filters: [{ namePrefix: "ESP32"/*"dali_test"*/ }],
     optionalServices: [SERVICE_UUID],
   };
   return new Promise((resolve, reject) => {
@@ -1690,11 +1735,16 @@ async function isCommissionFinished() {
     //     }
     //   });
     // }
-
-    while(!commissionFinished){
+    var elaspedTime = Date.now();
+    var timeout_event_id = setTimeout(daliBusPowerReminder, 30 * 1000);
+    while(!commissionFinished 
+      && ((elaspedTime - entryTime) <= COMMISSIONING_TIME_LIMIT/* maximum allow time limit for commissioning (in ms) */)
+    ){
+      elaspedTime = Date.now();
       await delay_ms(1000);
       log("commission finished: " + commissionFinished);
     }
+    clearTimeout(timeout_event_id);
     alert("escape from while loop");
     resolve("commissioning completed");
   });
@@ -1915,10 +1965,6 @@ async function btFileCharacteristicNotifyHandler(event){
     document.getElementById("device-control-dashboard-container").style.display = "none";
     loading_screen.style.display = "none";
   }
-  else if(str_buf.toString() == "R"){
-    commissionFinished = true;
-    // alert("BT notification: commission finished");
-  }
 
   // getCharacteristic(SERVICE_UUID, CHARACTERISTIC_FILE_UUID)
   // .then((characteristic) => {
@@ -1948,6 +1994,9 @@ async function btDebugCharacteristicNotifyHandler(event){
     commissionFinished = true;
     // log("notification received");
     alert("notification value" + str_buf.toString());
+  }
+  else{
+    alert(str_buf);
   }
 }
 
@@ -2123,3 +2172,7 @@ async function updateControlGearSelectMenu(){
   });
 }
 
+function daliBusPowerReminder(){
+  alert("Plese check the power supply for the DALI bus");
+  setTimeout(daliBusPowerReminder, 30 * 1000);
+}
