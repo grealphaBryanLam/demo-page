@@ -1,5 +1,5 @@
 /** 
- * @version 0.8
+ * @version 0.9
  * @status debug
  * 
  * @todo
@@ -9,9 +9,14 @@
  * - (optional) show device type of the selected control gear:
  * 
  * @changelog
+ * ver 0.9
+ * 
+ * 
  * ver 0.8
  * - disable update firmware by short address (cannot distinguish control gears belong to same product series)
  * - added rountine updateFWUGroupAddress(): renew the firmware update's group address after commissioning
+ * - addded DEBUG and CMD notification handler
+ * - added additional condition for escaping from commission loop
  * 
  * ver 0.7
  * - added ENABLE DEVICE TYPE to the calling rountine
@@ -47,14 +52,16 @@ const BLE_CMD_SET_FADE_TIME                           = " 301 ";
 const BLE_CMD_SET_FADE_RATE                           = " 302 ";
 const BLE_CMD_SET_EXTENDED_FADE_TIME                  = " 303 ";
 const BLE_CMD_QUERY_FADE_TIME_AND_RATE                = " 304 ";  
-const BLE_CMD_GET_ALL_CONTROL_GEAR_SHORT_ADDRESSES    = " 400 ";
+const BLE_CMD_SET_ALL_CONTROL_GEAR_SHORT_ADDRESSES    = " 400 ";
 const BLE_CMD_SET_ALL_CONTROL_GEAR_GROUP_ADDRESSES    = " 401 ";
 const BLE_CMD_GET_ALL_CONTROL_GEAR_GTIN               = " 402 ";
 const BLE_CMD_GET_ALL_CONTROL_GEAR_GROUP_ADDRESSES    = " 403 ";
 const BLE_CMD_CONTROL_GEAR_COMMISSIONING              = " 404 ";
-const BLE_CMD_GET_ALL_CONTROL_GEAR_DEVICE_TYPE        = " 405 ";
+const BLE_CMD_SET_ALL_CONTROL_GEAR_DEVICE_TYPE        = " 405 ";
 const BLE_CMD_GET_ALL_CONTROL_GEAR_ID                 = " 406 ";
 const BLE_CMD_GET_CONTROL_GEAR_GROUP_GTIN             = " 407 ";
+const BLE_CMD_GET_ALL_CONTROL_GEAR_SHORT_ADDRESSES    = " 408 ";
+const BLE_CMD_GET_ALL_CONTROL_GEAR_DEVICE_TYPE        = " 409 ";
 const BLE_CMD_GET_MTU_SIZE                            = " 500 ";
 const BLE_CMD_BEGIN_FILE_TRANSFER                     = " 501 ";
 const BLE_CMD_END_FILE_TRANSFER                       = " 502 ";
@@ -111,6 +118,7 @@ var original_selected_gtin;
 
 // 2022-05-30 Bryan
 var control_gear_id;
+var control_gear_device_type;
 
 // 2022-05-18 Bryan
 // Not recommended to use 
@@ -413,10 +421,7 @@ led_brightness_slider.addEventListener("change", async function () {
       characteristic.writeValueWithoutResponse(data_buf);
   });
 
-  /**
-   * the MCU cannot parse command (non-blocking)
-   * cause: (1) not enough time for the MCU to compute before new command arrives
-  */
+  /** @check reduce waiting time if possible */
   await delay_ms(NORMAL_DELAY_TIME /* original: 100 ms */);
 
   refreshControlDashboard()
@@ -449,17 +454,32 @@ read_control_gear.addEventListener("click", async function () {
       // wait 1 sec to let BLE server ready for next command
       await delay_ms(1000);
       return getAllControlGearGTIN()
-      .then((promise) => {
-        return promise;
-      });
+        .then((promise) => {
+          return promise;
+        });
     })
     .then(async (promise) => {
       await delay_ms(1000);
       return getAllControlGearGroupAddress()
-              .then((promise) => {
-                return promise;
-              });
+        .then((promise) => {
+          return promise;
+        });
     })
+    .then(async(promise) => {
+      await delay_ms(1000);
+      return getAllControlGearID()
+        .then((promise) =>{
+          return promise; // resolve("got ID");
+        });
+    })
+    /** skip fetching device type: not implement the message in controller */
+    // .then(async (promise) =>{
+    //   await delay_ms(1000);
+    //   return getAllControlGearDeviceType()
+    //     .then((promise) =>{
+    //       return promise;
+    //     });
+    // })
     // change the firmware update short address options
     .then(async (prmoise) => {
       return updateFirmwareUpdateShortAddressMenu()
@@ -716,10 +736,12 @@ control_gear_select_menu.addEventListener("change", async function() {
         await delay_ms(200);
         refreshFadingInfo()
         .then((promise) => {
-          // also refresh the selected option
+          // also refresh the device info of the selected control gear
 
           document.getElementById("control-gear-gtin").innerHTML  = "0x" + control_gear_gtin[control_gear_short_address].toString(16).toUpperCase();
           document.getElementById("control-gear-group-address").innerHTML = control_gear_group_address[control_gear_short_address];
+          // @issue: some device cannot fetch ID
+          document.getElementById("control-gear-id").innerHTML = "0x" + control_gear_id[control_gear_short_address].toString(16).toUpperCase();
           // refreshSliderValue(brightness);
           document.getElementById(
             "device-control-dashboard-container"
@@ -856,7 +878,7 @@ get_all_control_gear_device_types_button.addEventListener("click", function(){
   getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
   .then((characteristic) => {
     characteristic.writeValueWithoutResponse(
-      asciiToUint8Array((0).toString() + BLE_CMD_GET_ALL_CONTROL_GEAR_DEVICE_TYPE + (0).toString())
+      asciiToUint8Array((0).toString() + BLE_CMD_SET_ALL_CONTROL_GEAR_DEVICE_TYPE + (0).toString())
     )
   })/* Get the reply */;
 })
@@ -1147,6 +1169,9 @@ function asciiToUint8Array(str) {
   return new Uint8Array(chars);
 }
 
+/**
+ * @brief refresh the DAPC level of the selected control gear
+ */
 async function refreshControlDashboard() {
   return new Promise(async (resolve, reject) => {
     if(!in_breathing){
@@ -1161,7 +1186,7 @@ async function refreshControlDashboard() {
         );
       }
     );
-    
+      
     // 2022-05-27 Bryan
     // DEBUG: Increase the waiting time, so that the response should not be empty
     await delay_ms(300);
@@ -1232,12 +1257,23 @@ async function getControlGearPresent() {
     .then((characteristic) => {
       return characteristic.writeValueWithoutResponse(
         // asciiToUint8Array("0 400 0")
-        asciiToUint8Array((0).toString() + BLE_CMD_GET_ALL_CONTROL_GEAR_SHORT_ADDRESSES + (0).toString())
+        asciiToUint8Array((0).toString() + BLE_CMD_SET_ALL_CONTROL_GEAR_SHORT_ADDRESSES + (0).toString())
       );
     });
 
     // scan through the network require ~3.047s on MCU
-    // changed 
+    // changed the waiting time
+    await delay_ms(3200);
+
+    /* get the devices' short addresses */
+    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+    .then((characteristic) => {
+      return characteristic.writeValueWithoutResponse(
+        // asciiToUint8Array("0 400 0")
+        asciiToUint8Array((0).toString() + BLE_CMD_GET_ALL_CONTROL_GEAR_SHORT_ADDRESSES + (0).toString())
+      );
+    });
+
     await delay_ms(3200);
 
     getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
@@ -1586,12 +1622,12 @@ async function renewBusInfoOnBLEServer() {
     // All data on the server side have been erased after formmating SPIFFS
     await getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
     .then((characteristic) => {
-      /** BLE_CMD_GET_ALL_CONTROL_GEAR_SHORT_ADDRESSES: update the short addresses, GTIN
+      /** BLE_CMD_SET_ALL_CONTROL_GEAR_SHORT_ADDRESSES: update the short addresses, GTIN
        * (and ID)
       */
       return characteristic.writeValueWithoutResponse(
         // asciiToUint8Array("0 400 0")
-        asciiToUint8Array((0).toString() + BLE_CMD_GET_ALL_CONTROL_GEAR_SHORT_ADDRESSES + (0).toString())
+        asciiToUint8Array((0).toString() + BLE_CMD_SET_ALL_CONTROL_GEAR_SHORT_ADDRESSES + (0).toString())
       );
     })
     .then(async(promise) => {
@@ -1631,11 +1667,12 @@ async function renewBusInfoOnBLEServer() {
     getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
     .then((characteristic) => {
       characteristic.writeValueWithoutResponse(
-        asciiToUint8Array((0).toString() + BLE_CMD_GET_ALL_CONTROL_GEAR_DEVICE_TYPE + (0).toString())
+        asciiToUint8Array((0).toString() + BLE_CMD_SET_ALL_CONTROL_GEAR_DEVICE_TYPE + (0).toString())
       )
     });
     // scan through the network require ~3.047s on MCU
     await delay_ms(3200);
+
     log("Controller recovers device type(s)");
 
     resolve("BLE server recovers the bus info");
@@ -2032,7 +2069,6 @@ async function updateBusInfoOnScreen(){
     */
     document.getElementById("control-gear-gtin").innerHTML  = "0x" + control_gear_gtin[control_gear_short_address].toString(16).toUpperCase();
     /* @NOTE: ID cannot be fetched */
-    // document.getElementById("control-gear-id").innerHTML = ;
     /** refresh DAPC value and fade time setting 
      * led-status
      * led-brightness
@@ -2061,10 +2097,10 @@ async function getAllControlGearID(){
       })
       .then(async (promise) => {
         /**
-         * wait until all control gear ID found,
-         * and the result has been saved in the characteristic
+         * device ID should be stored in ble server already
+         * get all data from controller
          */
-        await delay_ms(/* N ms */);
+        await delay_ms(1000);
 
         getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
         .then((characteristic) => {
@@ -2079,8 +2115,8 @@ async function getAllControlGearID(){
           var i = 0;
           log("str buf length: " + str_buf.length);
           // If the data transferred is not a whole word, discard that word 
-          var num_of_word = Math.floor(str_buf.length / ID_WORD_SIZE_IN_BYTES);
-          log("Number of GTIN: " + num_of_word);
+          var num_of_word = Math.floor(str_buf.length / ID_WORD_SIZE_IN_BYTES); // (8 Bytes * 2) + 1
+          log("Number of ID: " + num_of_word);
   
           // reset the array
           control_gear_id = new Array();
@@ -2175,4 +2211,35 @@ async function updateControlGearSelectMenu(){
 function daliBusPowerReminder(){
   alert("Plese check the power supply for the DALI bus");
   setTimeout(daliBusPowerReminder, 30 * 1000);
+}
+
+async function getAllControlGearDeviceType(){
+  return new Promise(async(resolve, reject) =>{
+    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+      .then((characteristic) => {
+        characteristic.writeValueWithoutResponse(
+          asciiToUint8Array((0).toString() + BLE_CMD_SET_ALL_CONTROL_GEAR_DEVICE_TYPE + (0).toString())
+        )
+      });
+    // scan through the network require ~3.047s on MCU
+    await delay_ms(3200);
+
+    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+      .then((characteristic) =>{
+        characteristic.readValue()
+          .then((dataview) => {
+            log("dataview");
+            log(dataview);
+            return new TextDecoder().decode(dataview);
+          })
+          .then((str_buf) => {
+            /**
+             * [NOT yet implemented in the DALI controller]
+             * - receive message e.g. "0: 1 6; 1: 6;"
+             * separator within same control gear: ' '
+             * separator for different control gear: ';'
+             */ 
+          });
+      });
+  })
 }
