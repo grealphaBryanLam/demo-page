@@ -35,7 +35,7 @@
         </button>
       </div>
 
-      <div id="selected-control-gear-container">
+      <div id=selected-control-gear-container>
         <div
           class="device-control-dashboard control-gear-selection"
           id="control-gear-selection-button-container"
@@ -61,7 +61,8 @@
         <button id="get-all-control-gear-device-types-button" type="button">Get device types</button>
         <div id="all-control-gear-gtin"></div>
       </div>
-      
+      <!-- DEBUG -->
+
       <div id="device-control-dashboard-container">
         <div id="selected-control-gear-info-container">
           <div class="device-info-gtin " id="control-gear-gtin-display-text">GTIN: </div>
@@ -95,7 +96,7 @@
               Read Characteristic
             </button>
             <form id="debug-input-form">
-              <input id="write-ble-characteristic" type="text" />
+              <input id="write-ble-characteristic-text" type="text" />
               <button id="write-ble-characteristic" type="button">
                 Write Characteristic
               </button>
@@ -147,6 +148,50 @@
           <button id="led-light-up" type="button">Light Up</button>
         </div>
         
+        <div class="device-control-dashboard" id="dapc-scenes-container">
+          <h3>Scenes</h3>
+          <!-- three mode: set, remove, GOTO -->
+          <!-- dropdown menu with null option -->
+          <div class="device-control-dashboard" id="dapc-mode-dropdown-menu-container">
+            DAPC Scene Mode:
+            <select id="dapc-mode-selection-menu">
+              <option value="n" id="nop"></option>
+              <option value="s" id="set-dapc">SET</option>
+              <option value="r" id="remove-dapc">REMOVE</option>
+              <option value="g" id="goto-dapc">GOTO</option>
+            </select>
+            <button type="button" id="dapc-mode-selection-button" style="display: none"></button>
+          </div>
+
+          <div class="device-control-dashboard" id="scene-menu-container">
+            <h4>GOTO DAPC</h4>
+            Scene #:
+            <select id="scene-menu">
+            </select>
+            <button type="button" id="dapc-scene-selection-button" style="display: none"></button>
+          </div>
+
+          <div class="device-control-dashboard" id="set-dapc-scene-form-container">
+            <h4>SET DAPC</h4>
+            <form id="set-dapc-scene-form">
+              <input id="set-dapc-scene-number" placeholder="Scene No." type="text" />
+              <input id="set-dapc-scene-value" placeholder="DAPC Value" type="text" />
+              <button id="set-dapc-scene-button" type="button">
+                Set/Modify scene
+              </button>
+            </form>
+          </div>
+
+          <div class="device-control-dashboard" id="remove-dapc-scene-form-container">
+            <h4>REMOVE DAPC</h4>
+            <form id="remove-dapc-scene-form">
+              <input id="remove-dapc-scene-number" placeholder="Scene No." type="text" />
+              <button id="remove-dapc-scene-button" type="button">Remove scene</button>
+            </form>
+          </div>
+
+        </div>
+
         <div class="device-control-dashboard" id="fading-control-container">
           <!-- <input
             type="range"
