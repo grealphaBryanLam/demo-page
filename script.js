@@ -1,5 +1,5 @@
 /** 
- * @version 0.9
+ * @version 0.10
  * @status debug
  * 
  * @todo
@@ -9,8 +9,11 @@
  * - (optional) show device type of the selected control gear:
  * 
  * @changelog
- * ver 0.9
+ * ver 0.10
+ * - Add/Remove/Go-To Scenes 
  * 
+ * ver 0.9
+ * - added getAllControlGearID() to update routine
  * 
  * ver 0.8
  * - disable update firmware by short address (cannot distinguish control gears belong to same product series)
@@ -51,7 +54,16 @@ const BLE_CMD_DAPC_COMMAND                            = " 300 ";
 const BLE_CMD_SET_FADE_TIME                           = " 301 ";
 const BLE_CMD_SET_FADE_RATE                           = " 302 ";
 const BLE_CMD_SET_EXTENDED_FADE_TIME                  = " 303 ";
-const BLE_CMD_QUERY_FADE_TIME_AND_RATE                = " 304 ";  
+const BLE_CMD_QUERY_FADE_TIME_AND_RATE                = " 304 ";
+const BLE_CMD_SET_SCENE_BASE                          = " 305 ";  // 305 - 320
+const BLE_CMD_SET_SCENE_MAX                           = " 320 ";
+const BLE_CMD_REMOVE_SCENE_BASE                       = " 321 ";  // 321 - 336
+const BLE_CMD_REMOVE_SCENE_MAX                        = " 336 ";
+const BLE_CMD_GO_TO_SCENE_BASE                        = " 337 ";  // 337 - 352
+const BLE_CMD_GO_TO_SCENE_MAX                         = " 352 ";
+const BLE_CMD_QUERY_SCENE_BASE                        = " 353 ";  // 353 - 368
+const BLE_CMD_QUERY_SCENE_MAX                         = " 368 ";
+const BLE_CMD_QUERY_ALL_SCENE_DAPC_VALUE              = " 369 ";
 const BLE_CMD_SET_ALL_CONTROL_GEAR_SHORT_ADDRESSES    = " 400 ";
 const BLE_CMD_SET_ALL_CONTROL_GEAR_GROUP_ADDRESSES    = " 401 ";
 const BLE_CMD_GET_ALL_CONTROL_GEAR_GTIN               = " 402 ";
@@ -67,6 +79,11 @@ const BLE_CMD_BEGIN_FILE_TRANSFER                     = " 501 ";
 const BLE_CMD_END_FILE_TRANSFER                       = " 502 ";
 const BLE_CMD_FORMAT_SPIFFS                           = " 600 ";
 const BLE_CMD_EXIT_INITIALIZATION                     = " 601 ";
+
+const SET_SCENE_BASE = 305;
+const REMOVE_SCENE_BASE = 321;
+const GOTO_SCENE_BASE = 337;
+const QUERY_SCENE_BASE = 353;
 
 const ZERO_ASCII_CODE = 48;
 const ESP32_BLE_MTU_SIZE = 512;
@@ -96,6 +113,12 @@ const COMMISSIONING_TIME_LIMIT = (15 * 60 * 1000);
 
 const DEBUG_SHORT_ADDRESS = 0;
 
+const REPLY_STR_BUF_TYPE = {
+  SHORT_ADDRESS: 0,
+  SCENE_VALUE: 1,
+};
+Object.freeze(REPLY_STR_BUF_TYPE);
+
 var bluetoothDevice;
 var bluetoothDeviceGattServer;
 
@@ -105,6 +128,7 @@ var ble_characteristic_value_buf;
 var characteristic_buffer_value = new ArrayBuffer(20);
 var control_gear_short_address = 1; // short address for the command sequence
 var availiable_control_gear;  // array of short addresses available of control gear
+var scene_value; // array of scene value (profile 0 - 15)
 var ble_mtu_size = 0;
 
 var file_name;
@@ -144,6 +168,11 @@ var fading_disabled = false;
 
 // 2022-06-02 Bryan
 var commissionFinished = false;
+
+var null_option = document.createElement("option");
+null_option.id = "";
+null_option.value = "";
+null_option.textContent = "";
 
 let connectButton = document.getElementById("connect");
 let disconnectButton = document.getElementById("disconnect");
@@ -185,6 +214,14 @@ let disable_fading = document.getElementById("disable-fading");
 let led_breathing_button = document.getElementById("led-breathing");
 let firmware_update_file_button = document.getElementById("firmware-update-file-button");
 let loading_screen = document.getElementById("loading-screen-container");
+
+let dapc_mode_select_menu = document.getElementById("dapc-mode-selection-menu");
+let goto_scene_menu = document.getElementById("scene-menu");
+let set_dapc_scene_number = document.getElementById("set-dapc-scene-number");
+let set_dapc_scene_value = document.getElementById("set-dapc-scene-value");
+let set_dapc_scene_button =  document.getElementById("set-dapc-scene-button");
+let remove_dapc_scene_number = document.getElementById("remove-dapc-scene-number");
+let remove_dapc_scene_button = document.getElementById("remove-dapc-scene-button"); 
 
 // DEBUG
 let readCharacteristic = document.getElementById("read-ble-characteristic");
@@ -1286,7 +1323,8 @@ async function getControlGearPresent() {
       return new TextDecoder().decode(dataview);
     })
     .then((str_buf) => {
-      parseControlGearShortAddress(str_buf)
+      /**  @todo: modify this function defintion: general purpose should be convert variable-sized string to array of values */
+      parseWordsSeparatedBySpace(str_buf, REPLY_STR_BUF_TYPE.SHORT_ADDRESS)
       .then((availiable_control_gear) => {
         // append each item in array to dropdown menu
         var drop_down_menu_option;
@@ -1642,7 +1680,7 @@ async function renewBusInfoOnBLEServer() {
           return new TextDecoder().decode(dataview);
         })
         .then(async (str_buf) => {
-          return parseControlGearShortAddress(str_buf)
+          return parseWordsSeparatedBySpace(str_buf, REPLY_STR_BUF_TYPE.SHORT_ADDRESS)
             .then((availiable_control_gear) => {
               time("get all short addresses");
               return availiable_control_gear;
@@ -2131,7 +2169,7 @@ async function getAllControlGearID(){
   });
 }
 
-async function parseControlGearShortAddress(str_buf){
+async function parseWordsSeparatedBySpace(str_buf, str_type /** short address, scene value */){
   return new Promise(async (resolve, reject) => {
     /* parse string into word, then convert string to Uint8Array */
     var start_index = -1;
@@ -2148,15 +2186,25 @@ async function parseControlGearShortAddress(str_buf){
       }
     }
     /* available_control_gear is the array of short addresses */
-    availiable_control_gear = new Array();
-    var num_of_availiable_control_gear = 0;
-    for (var i = 0; i < sliced_word_buf.length; i++) {
-      availiable_control_gear.push(parseInt(sliced_word_buf[i]));
-      num_of_availiable_control_gear++;
+    if(str_type == REPLY_STR_BUF_TYPE.SCENE_VALUE){
+      scene_value = new Array();
+      for (var i = 0; i < sliced_word_buf.length; i++) {
+        scene_value.push(parseInt(sliced_word_buf[i]));
+      }
+      log(scene_value);
+      resolve(scene_value);
     }
-    /* parse END */
-    log("num of control gear found: " + num_of_availiable_control_gear);
-    resolve(availiable_control_gear);
+    else if(str_type == REPLY_STR_BUF_TYPE.SHORT_ADDRESS){
+      availiable_control_gear = new Array();
+      var num_of_availiable_control_gear = 0;
+      for (var i = 0; i < sliced_word_buf.length; i++) {
+        availiable_control_gear.push(parseInt(sliced_word_buf[i]));
+        num_of_availiable_control_gear++;
+      }
+      /* parse END */
+      log("num of control gear found: " + num_of_availiable_control_gear);
+      resolve(availiable_control_gear);
+    }
   });
 }
 
@@ -2242,4 +2290,145 @@ async function getAllControlGearDeviceType(){
           });
       });
   })
+}
+
+dapc_mode_select_menu.addEventListener("change", async function(){
+  var dropdown = document.getElementById("dapc-mode-selection-menu");
+  if(dropdown.value == "n"){
+    document.getElementById("scene-menu-container").style.display = "none";
+    document.getElementById("set-dapc-scene-form-container").style.display = "none";
+    document.getElementById("remove-dapc-scene-form-container").style.display = "none";
+  }
+  else if(dropdown.value == "s"){
+    document.getElementById("remove-dapc-scene-form-container").style.display = "none";
+    document.getElementById("scene-menu-container").style.display = "none";
+    document.getElementById("set-dapc-scene-form-container").style.display = "block";
+  }
+  else if(dropdown.value == "r"){
+    document.getElementById("scene-menu-container").style.display = "none";
+    document.getElementById("set-dapc-scene-form-container").style.display = "none";
+    document.getElementById("remove-dapc-scene-form-container").style.display = "block";
+  }
+  else if(dropdown.value == "g"){
+    document.getElementById("set-dapc-scene-form-container").style.display = "none";
+    document.getElementById("remove-dapc-scene-form-container").style.display = "none";
+    document.getElementById("scene-menu-container").style.display = "block";
+    // refresh the GOTO scene menu
+    loading_screen.style.display = "block";
+    refreshDAPCSceneMenu()
+    .then((promise) => {
+      loading_screen.style.display = "none";
+    });
+  }
+});
+
+goto_scene_menu.addEventListener("change", async function(){
+  // value of option = DAPC value
+  // id (post-fix) = sceneNumber
+  var dropdown = document.getElementById("scene-menu");
+  var index = parseInt(dropdown.value);
+  log("DAPC value: " + scene_value[index]);
+  log("const GOTO_SCENE_BASE: " + typeof(GOTO_SCENE_BASE));
+  log("index type: " + typeof(index));
+  var command_word = " " + (GOTO_SCENE_BASE + index).toString() + " ";
+  log(command_word);
+  getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+  .then((characteristic) => {
+    characteristic.writeValueWithoutResponse(
+      asciiToUint8Array(/*(0).toString()*/ control_gear_short_address.toString() + command_word + (0).toString())
+    );
+  });
+  // update the slider & DAPC info
+  await delay_ms(NORMAL_DELAY_TIME);
+  refreshControlDashboard();
+});
+
+set_dapc_scene_button.addEventListener("click", async function(){
+  if(set_dapc_scene_number.value != "undefined" && set_dapc_scene_value.value != "undefined"){
+    // log("scene no. " + set_dapc_scene_number.value + " " + typeof(set_dapc_scene_number.value));
+    // log("scene value: " + set_dapc_scene_value.value + " " + typeof(set_dapc_scene_value.value));
+    var scene_number = parseInt(set_dapc_scene_number.value) + SET_SCENE_BASE;
+    var scene_number_str_buf = " " + scene_number.toString() + " ";
+    log(scene_number_str_buf);
+    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+    .then((characteristic) => {
+      characteristic.writeValueWithoutResponse(
+        asciiToUint8Array(/*(0).toString()*/ control_gear_short_address.toString() + scene_number_str_buf.toString() + set_dapc_scene_value.value.toString())
+      );
+    });
+    await delay_ms(NORMAL_DELAY_TIME);
+  }
+  else{
+    alert("missing parameter");
+  }
+});
+
+remove_dapc_scene_button.addEventListener("click", function(){
+  if(remove_dapc_scene_number != "undefined"){
+    log("REMOVE scene no. " + remove_dapc_scene_number.value);
+    var scene_number = parseInt(remove_dapc_scene_number.value) + REMOVE_SCENE_BASE;
+    var scene_number_str_buf = " " + scene_number.toString() + " ";
+    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+    .then((characteristic) => {
+      characteristic.writeValueWithoutResponse(
+        asciiToUint8Array(/*(0).toString()*/control_gear_short_address.toString() + scene_number_str_buf + (0).toString())
+      );
+    })
+  }
+  else{
+    alert("missing parameter");
+  }
+});
+
+async function refreshDAPCSceneMenu(){
+  return new Promise(async (resolve, reject) => {
+    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+    .then((characteristic) => {
+      characteristic.writeValueWithoutResponse(
+        asciiToUint8Array(/*(0).toString()*/ control_gear_short_address.toString() + BLE_CMD_QUERY_ALL_SCENE_DAPC_VALUE + (0).toString())
+      );
+    });
+    
+    await delay_ms(800);  // scan 64 elements requires ~3.2s; 16 elements: 3.2 * 0.25 = 0.8s
+    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+    .then(async (characteristic) => {
+      characteristic.readValue()
+      .then((dataview) => {
+        log(dataview);
+        return new TextDecoder().decode(dataview);
+      })
+      .then(async (str_buf) => {
+        // 16 values
+        log("str_buf: " + str_buf);
+        parseWordsSeparatedBySpace(str_buf, REPLY_STR_BUF_TYPE.SCENE_VALUE)
+        .then((scene_profile) => {
+          return scene_profile;
+        })
+        .then((scene_profile) => {
+          /** show loading screen */
+          /**
+           * clear all options in scene menu
+           */
+          document
+          .getElementById("scene-menu")
+          .replaceChildren(null_option);
+          
+          var drop_down_menu_option;
+          for (var i = 0; i < 16; i++) {
+            if(scene_value[i] >= 0 && scene_value[i] < 0xFF){
+              drop_down_menu_option = document.createElement("option");
+              drop_down_menu_option.id = "option-" + i;
+              drop_down_menu_option.textContent = "Scene " + (i).toString() + ": " + scene_value[i].toString();
+              drop_down_menu_option.value = i;
+              document
+                .getElementById("scene-menu")
+                .appendChild(drop_down_menu_option);
+            }
+          }
+          resolve("menu updated");
+          /** hide loading screen */
+        });
+      });
+    });
+  });
 }
