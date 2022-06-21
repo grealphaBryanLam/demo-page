@@ -239,7 +239,6 @@ connectButton.addEventListener("click", async function () {
   loading_screen.style.display = "block";
   connect()
   .then((promise) => {
-    loading_screen.style.display = "none";
     classList.remove("w3-light-grey", "w3-red");
     classList.add("w3-light-green");    
     // GATT operation in progress
@@ -258,6 +257,7 @@ connectButton.addEventListener("click", async function () {
       characteristic.startNotifications()
       .then((characteristic) => {
         time("wait CMD notification");
+        loading_screen.style.display = "none";
       });
 
       characteristic.addEventListener("characteristicvaluechanged", btCmdCharacteristicNotifyHandler);
