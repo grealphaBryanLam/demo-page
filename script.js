@@ -283,6 +283,9 @@ connectButton.addEventListener("click", async function () {
       });
       // does the android phone know the notification bit(s) are set?
       characteristic.addEventListener("characteristicvaluechanged", btFileCharacteristicNotifyHandler);
+    })
+    .catch((error) => {
+      time(error);
     });
 
     await delay_ms(NORMAL_DELAY_TIME);
@@ -296,10 +299,14 @@ connectButton.addEventListener("click", async function () {
       });
 
       characteristic.addEventListener("characteristicvaluechanged", btCmdCharacteristicNotifyHandler);
+    })
+    .catch((error) => {
+      time(error);
+      loading_screen.style.display = "none";
     });
 
     await delay_ms(NORMAL_DELAY_TIME);
-
+    /** GATT server is disconnected */
     getCharacteristic(SERVICE_UUID, CHARACTERISTIC_DEBUG_UUID)
     .then((characteristic) => {
       characteristic.startNotifications()
@@ -309,6 +316,9 @@ connectButton.addEventListener("click", async function () {
 
       characteristic.addEventListener("characteristicvaluechanged", btDebugCharacteristicNotifyHandler);
     })
+    .catch((error) => {
+      time(error);
+    });
   })
   .catch((error) => {
     loading_screen.style.display = "none";
@@ -1125,6 +1135,8 @@ async function gatt_connect(device) {
     .then((gattServer) => {
       deviceConnected = device.gatt.connected;
       if (deviceConnected == true) {
+        // characteristic_presentation_format
+        // alert("characteristic format: " + device.gatt.characteristic_presentation_format);
         log("> Bluetooth Device connected");
         document.getElementById("device-connection-display-status").innerHTML = "Connected";
         resolve(gattServer);
@@ -1867,7 +1879,7 @@ async function isCommissionFinished() {
       log("commission finished: " + commissionFinished);
     }
     clearTimeout(timeout_event_id);
-    alert("escape from while loop");
+    // alert("escape from while loop");
     resolve("commissioning completed");
   });
 }
@@ -2115,7 +2127,7 @@ async function btDebugCharacteristicNotifyHandler(event){
   if(str_buf.toString() == "R"){
     commissionFinished = true;
     // log("notification received");
-    alert("notification value" + str_buf.toString());
+    log("notification value" + str_buf.toString());
   }
   else{
     alert(str_buf);
