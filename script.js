@@ -1,16 +1,25 @@
 /** 
- * @version 0.10
+ * @version 0.11
  * @status debug
  * 
+ * @issue
+ * - return error when calling gattCharacteristic.startNotification: "GATT server is disconnected."
+ * 
  * @todo
+ * - add routine for re-connecting to ble server after update firmware via Wi-Fi
  * - fix the issue that client cannot perform some action by the time receiving new characteristic
  * - renew short/group address by using GTIN and ID before renewBusInfoOnBLEServer()
  *  - reset the layout after the firmware update process is completed 
  * - (optional) show device type of the selected control gear:
  * 
  * @changelog
+ * ver 0.11
+ * - added command "BLE_CMD_START_WIFI_ADVERTISMENT": for firmware update process
+ * - [DOING] 
+ * 
  * ver 0.10
- * - Add/Remove/Go-To Scenes 
+ * - Add/Remove/Go-To Scenes
+ * - modified connect routine: hide loading screen after notifications are set.
  * 
  * ver 0.9
  * - added getAllControlGearID() to update routine
@@ -79,6 +88,7 @@ const BLE_CMD_BEGIN_FILE_TRANSFER                     = " 501 ";
 const BLE_CMD_END_FILE_TRANSFER                       = " 502 ";
 const BLE_CMD_FORMAT_SPIFFS                           = " 600 ";
 const BLE_CMD_EXIT_INITIALIZATION                     = " 601 ";
+const BLE_CMD_START_WIFI_ADVERTISMENT                 = " 800 ";
 
 const SET_SCENE_BASE = 305;
 const REMOVE_SCENE_BASE = 321;
@@ -112,6 +122,8 @@ const NORMAL_DELAY_TIME = 200;
 const COMMISSIONING_TIME_LIMIT = (15 * 60 * 1000);
 
 const DEBUG_SHORT_ADDRESS = 0;
+
+const DATA_BLOCK_OVERHEAD_SIZE = 14;
 
 const REPLY_STR_BUF_TYPE = {
   SHORT_ADDRESS: 0,
@@ -174,6 +186,20 @@ null_option.id = "";
 null_option.value = "";
 null_option.textContent = "";
 
+var ble_wifi_button_pressed = 0;
+
+var firmware_update_file_object;
+var file_date_of_release;
+var date_of_release;
+// 2022-06-21
+// struct of each control gear
+const CONTROL_GEAR_INFO = function(short_address, group_address, gtin, id){
+  this.short_address = short_address;
+  this.group_address = group_address;
+  this.gtin = gtin;
+  this.id = id;
+}
+
 let connectButton = document.getElementById("connect");
 let disconnectButton = document.getElementById("disconnect");
 let ledOn = document.getElementById("led-on");
@@ -223,6 +249,8 @@ let set_dapc_scene_button =  document.getElementById("set-dapc-scene-button");
 let remove_dapc_scene_number = document.getElementById("remove-dapc-scene-number");
 let remove_dapc_scene_button = document.getElementById("remove-dapc-scene-button"); 
 
+let recall_control_gear = document.getElementById("recall-control-gear");
+
 // DEBUG
 let readCharacteristic = document.getElementById("read-ble-characteristic");
 let writeCharacteristic = document.getElementById("write-ble-characteristic");
@@ -232,15 +260,20 @@ let ble_cmd_end_file_transfer_button = document.getElementById("ble-cmd-end-file
 let control_gear_commissioning_button = document.getElementById("control-gear-commissioning-button");
 let get_all_control_gear_device_types_button = document.getElementById("get-all-control-gear-device-types-button");
 let http_post_send_data = document.getElementById("http-post-send-data");
+let ble_wifi_button = document.getElementById("stop-BLE-start-wifi-button")
+
 
 connectButton.addEventListener("click", async function () {
   var classList = document.getElementById("device-connection-text-box").classList;
 
   loading_screen.style.display = "block";
   connect()
-  .then((promise) => {
+  .then(async (promise) => {
     classList.remove("w3-light-grey", "w3-red");
-    classList.add("w3-light-green");    
+    classList.add("w3-light-green"); 
+    
+    await delay_ms(NORMAL_DELAY_TIME);
+    
     // GATT operation in progress
     getCharacteristic(SERVICE_UUID, CHARACTERISTIC_FILE_UUID)
     .then((characteristic) => {
@@ -248,9 +281,11 @@ connectButton.addEventListener("click", async function () {
       .then((characteristic) => {
         time("wait FILE notification");
       });
-
+      // does the android phone know the notification bit(s) are set?
       characteristic.addEventListener("characteristicvaluechanged", btFileCharacteristicNotifyHandler);
     });
+
+    await delay_ms(NORMAL_DELAY_TIME);
 
     getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
     .then((characteristic) => {
@@ -262,6 +297,8 @@ connectButton.addEventListener("click", async function () {
 
       characteristic.addEventListener("characteristicvaluechanged", btCmdCharacteristicNotifyHandler);
     });
+
+    await delay_ms(NORMAL_DELAY_TIME);
 
     getCharacteristic(SERVICE_UUID, CHARACTERISTIC_DEBUG_UUID)
     .then((characteristic) => {
@@ -628,6 +665,8 @@ firmware_update_button.addEventListener("click", async function () {
               })
               .then(async (chunks) => {
                 log(chunks);
+                // insert block number and newline character to each chunk
+                // dataBlockWrapper(chunks);
                 await delay_ms(NORMAL_DELAY_TIME);
             
                 // send cmd to indicate START file transfer 
@@ -969,6 +1008,13 @@ async function connect() {
       if (gattServer.connected) {
         document.getElementById("control-panel-container").style.display = "block";
         document.getElementById("read-control-gear-container").style.display = "block";
+        /** allow users to skip scanning DALI network if this client have connected once */
+        if(ble_wifi_button_pressed > 0){
+          document.getElementById("recall-control-gear").style.display = "block";
+        }
+        else{
+          document.getElementById("recall-control-gear").style.display = "none";
+        }
       }
       else {
         alert("Cannot connect the controller. Please turn it off and on.");
@@ -1745,6 +1791,7 @@ function time(text) {
 function handleFiles() {
   const fileList = this.files;
   // suppose only one file is selected
+  firmware_update_file_object = fileList[0];
   file_name = fileList[0].name;
   if(file_name !== "undefined"){ // File is selected
     // show options for user to update (indivdual device / same product)
@@ -2185,7 +2232,7 @@ async function parseWordsSeparatedBySpace(str_buf, str_type /** short address, s
         start_index = i;
       }
     }
-    /* available_control_gear is the array of short addresses */
+
     if(str_type == REPLY_STR_BUF_TYPE.SCENE_VALUE){
       scene_value = new Array();
       for (var i = 0; i < sliced_word_buf.length; i++) {
@@ -2195,6 +2242,7 @@ async function parseWordsSeparatedBySpace(str_buf, str_type /** short address, s
       resolve(scene_value);
     }
     else if(str_type == REPLY_STR_BUF_TYPE.SHORT_ADDRESS){
+      /* available_control_gear is the array of short addresses */
       availiable_control_gear = new Array();
       var num_of_availiable_control_gear = 0;
       for (var i = 0; i < sliced_word_buf.length; i++) {
@@ -2431,4 +2479,52 @@ async function refreshDAPCSceneMenu(){
       });
     });
   });
+}
+
+ble_wifi_button.addEventListener("click", function(){
+  ble_wifi_button_pressed++;
+  /** send command to ESP32: BLE_CMD_START_WIFI_ADVERTISMENT
+   * It is a no-reply command: the BLE server is not supppose to exist anymore
+   */
+  getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+  .then((characteristic) => {
+    characteristic.writeValueWithoutResponse(
+      asciiToUint8Array((0).toString() + BLE_CMD_START_WIFI_ADVERTISMENT + (0).toString())
+    )
+    .then((promise) => {
+      disconnect()
+      .then((promise) => {
+        var classList = document.getElementById("device-connection-text-box").classList;
+        log("caught error: disconnect()");
+        classList.remove("w3-light-green", "w3-light-red");
+        classList.add("w3-light-grey");
+      });
+    })
+  });
+});
+
+recall_control_gear.addEventListener("click", function(){
+  // show the container
+  document.getElementById("control-panel-container").style.display = "block";
+  document.getElementById("selected-control-gear-container").style.display = "block";
+});
+
+function fileDescriptionGenerator(){
+  var date_buf = new Date(firmware_update_file_object.lastModified);
+  log(date_buf);
+  date_of_release = date_buf.getFullYear().toString() + "-";
+  // return of getMonth() is zero-based
+  date_of_release += (date_buf.getMonth()+ 1).toString() + "-";
+  date_of_release += date_buf.getDate().toString();
+  log(date_of_release);
+  // other parameters may require user input
+}
+
+function dataBlockWrapper(chunks){
+  var i = 0;
+  while (i < chunks.length){
+    var data_buf = new Uint8Array(chunks[i].byteLength + DATA_BLOCK_OVERHEAD_SIZE);
+    /* Under construction */
+    i++;
+  }
 }
