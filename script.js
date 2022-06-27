@@ -1,5 +1,5 @@
 /** 
- * @version 0.12
+ * @version 0.13
  * @status debug
  * 
  * @issue
@@ -12,8 +12,11 @@
  *  - reset the layout after the firmware update process is completed 
  * 
  * @changelog
+ * ver 0.13
+ * - [DOING] changed the waiting approach of SPIFFS formatting
+ * 
  * ver 0.12
- * - [DOING] changed the firmware update routine.
+ * - changed the firmware update routine.
  * 
  * ver 0.11
  * - added command "BLE_CMD_START_WIFI_ADVERTISMENT": for firmware update process
@@ -196,6 +199,8 @@ var date_of_release;
 
 // var device_found = false;
 var connectedDevicesList = new Array();
+
+var formatCompleted = false;
 // 2022-06-21
 // struct of each control gear
 const CONTROL_GEAR_INFO = function(short_address, group_address, gtin, id){
@@ -641,62 +646,90 @@ firmware_update_button.addEventListener("click", async function () {
   // isValidFile()
   // .then(async (data) => {
     // // format SPIFFS
-    formatSPIFFS(); 
-    
-    // // check the initialization value from CMD characteristic
-    // // wait for 25s. Device takes around 20s to initalize 
-    await delay_ms(25000);
-
-    return reconnect()
-    .then(async (resolve) => {
-      // get MTU size from the MCU
-      return getMTUsize()
-      .then(async (promise) => {
-        /**
-         * @NOTE potential issue of the update process the re-generated short address
-         *        routine should be get back the new value from the controller
-        */
-        // Set all bus info
-        return renewBusInfoOnBLEServer()
+    formatSPIFFS() 
+    .then(async (promise) => {
+      isFormatCompleted()
+      .then(async(promise) => {
+        log("format completed");
+        return reconnect()
+        .then(async (resolve) => {
+          // get MTU size from the MCU
+          return getMTUsize()
           .then(async (promise) => {
-            /* Get all bus info */
-            getAllControlGearGTIN()
-            .then(async (promise) => {
-              await delay_ms(NORMAL_DELAY_TIME);
-              // return getAllControlGearID()
-              // .then(async (promise) => {
-                // await delay_ms
-              return getAllControlGearGroupAddress();
-              // })
-            })
-            .then(async (promise) => {
-              log("change FW update address");
-              return updateFWUGroupAddress()
-              .then(async (promise) =>{
-                /** Divide the data into chunks based on MTU size 
-                 * expected test result (test.hex): 
-                 * => 12393 Bytes / (MTU size)
-                 * => 25 data chunks to transfer the test file
-                 */ 
-                getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
-                .then((characteristic) => {
-                  characteristic.writeValueWithoutResponse(
-                    asciiToUint8Array(firmware_update_address.toString() + BLE_CMD_BEGIN_FILE_TRANSFER + (0).toString())
-                  )
-                });
-
-                alert("Please connect to the Wi-Fi Access Point DALI_GATEWAY\
-                Use IP \"192.168.4.1\" to upload file.");
-                loading_screen.style.display = "block";
-              })
-            });
-
+            getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+                  .then((characteristic) => {
+                    characteristic.writeValueWithoutResponse(
+                      asciiToUint8Array(firmware_update_address.toString() + BLE_CMD_BEGIN_FILE_TRANSFER + (0).toString())
+                    )
+                  });
+  
+            alert("Please connect to the Wi-Fi Access Point DALI_GATEWAY\
+              \nUse IP \"192.168.4.1\" to upload file.");
+            loading_screen.style.display = "block";
+            /**
+             * @NOTE potential issue of the update process the re-generated short address
+             *        routine should be get back the new value from the controller
+            */
+            // Set all bus info
+            // return renewBusInfoOnBLEServer()
+            // .then(async (promise) => {
+            //   /* Get all bus info */
+            //   getAllControlGearGTIN()
+            //   .then(async (promise) => {
+            //     await delay_ms(NORMAL_DELAY_TIME);
+            //     // return getAllControlGearID()
+            //     // .then(async (promise) => {
+            //       // await delay_ms
+            //     return getAllControlGearGroupAddress();
+            //     // })
+            //   })
+            //   .then(async (promise) => {
+            //     log("change FW update address");
+            //    return updateFWUGroupAddress()
+            //     .then(async (promise) =>{
+            //       /** Divide the data into chunks based on MTU size 
+            //        * expected test result (test.hex): 
+            //        * => 12393 Bytes / (MTU size)
+            //        * => 25 data chunks to transfer the test file
+            //        */ 
+            //       getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+            //       .then((characteristic) => {
+            //         characteristic.writeValueWithoutResponse(
+            //           asciiToUint8Array(firmware_update_address.toString() + BLE_CMD_BEGIN_FILE_TRANSFER + (0).toString())
+            //         )
+            //       });
+  
+            //       alert("Please connect to the Wi-Fi Access Point DALI_GATEWAY\
+            //       Use IP \"192.168.4.1\" to upload file.");
+            //       loading_screen.style.display = "block";
+            //     })
+            //   });
+            // });
           });
-      });
+        })
+        .catch((error) => {
+          alert("error caught: reconnect");
+        });
+      })
     })
-    .catch((error) => {
-      alert("error caught: reconnect");
-    });
+
+    // check the initialization value from CMD characteristic
+    // wait for 15s. Device takes around 14.5s to initalize 
+    // await delay_ms(15000);
+
+    // return getMTUsize()
+    //   .then(async (promise) => {
+    //     getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+    //     .then((characteristic) => {
+    //       characteristic.writeValueWithoutResponse(
+    //         asciiToUint8Array((240).toString() + BLE_CMD_BEGIN_FILE_TRANSFER + (0).toString())
+    //       )
+    //       .then((promise) => {
+    //         loading_screen.style.display = "none";
+    //       })
+    //     });
+    //   });
+    
   // });
 
   /* clear loading screen when BT notification received */
@@ -1492,12 +1525,18 @@ function divideDataIntoChunks(data, ble_mtu_size){
 }
 
 function formatSPIFFS() {
-  getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
-  .then((characteristic) => {
-    characteristic.writeValueWithoutResponse(
-      /* only command word is meaningful, address word and value word are discarded */
-      asciiToUint8Array((0).toString() + BLE_CMD_FORMAT_SPIFFS + (0).toString())
-    );
+  return new Promise((resolve, reject) => {
+    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+    .then((characteristic) => {
+      characteristic.writeValueWithoutResponse(
+        /* only command word is meaningful, address word and value word are discarded */
+        asciiToUint8Array((0).toString() + BLE_CMD_FORMAT_SPIFFS + (0).toString())
+      )
+      .then((promise) => {
+        resolve(promise);
+      })
+    });
+    /* "N" should be received after formatting */
   });
 }
 
@@ -2074,6 +2113,12 @@ async function btFileCharacteristicNotifyHandler(event){
     });
     // loading_screen.style.display = "none";
   }
+  else if(str_buf.toString() == "N"){
+    /* "N" -> the filesystem is formatted */
+    // reset the flag
+    formatCompleted = true;
+    log("SPIFFS partition is formatted");
+  }
 
   if(str_buf.toString() == "B"
     || str_buf.toString() == "Y"
@@ -2541,5 +2586,15 @@ function sendBleCmd(address, command, value){
         resolve(promise);
       });
     });
+  });
+}
+
+async function isFormatCompleted(){
+  return new Promise(async (resolve, reject) => {
+    formatCompleted = false;
+    while(!formatCompleted){
+      await delay_ms(1000);
+    }
+    resolve("format completed");
   });
 }
