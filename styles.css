@@ -47,6 +47,7 @@
 }
 
 #firmware-update-type-container,
+#firmware-update-form,
 #firmware-update-short-address-selection-container,
 #firmware-update-group-address-selection-container{
   display: none;
