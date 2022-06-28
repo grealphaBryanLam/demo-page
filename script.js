@@ -140,6 +140,8 @@ const REPLY_STR_BUF_TYPE = {
 };
 Object.freeze(REPLY_STR_BUF_TYPE);
 
+const TRANSMISSION_DELAY_MS = 500;
+
 var bluetoothDevice;
 var bluetoothDeviceGattServer;
 
@@ -1085,7 +1087,7 @@ async function reconnect() {
         return new Promise(async(resolve, reject) => {
           time("Try to reconnect with BLE device");
           await bluetoothDeviceGattServer.connect();
-          await delay_ms(3500);
+          await delay_ms(3500 + TRANSMISSION_DELAY_MS);
           if(bluetoothDeviceGattServer.connected) {
             resolve("connected");
           }
@@ -1135,7 +1137,7 @@ async function requestBluetoothDevice() {
         .then(async (gattServer) => {
           bluetoothDeviceGattServer = gattServer;
           // wait 3.5s and then evaluate the connection status
-          await delay_ms(3500);
+          await delay_ms(3500 + TRANSMISSION_DELAY_MS);
           log(bluetoothDeviceGattServer);
           var promise = gattServer;
           resolve(promise);
