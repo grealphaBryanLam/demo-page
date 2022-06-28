@@ -14,6 +14,10 @@
  * @changelog
  * ver 0.13
  * - [DOING] changed the waiting approach of SPIFFS formatting
+ * - object BluetoothRemoteGattServer is not iterable.
+ * - this client checks whether the connection is established after function 
+ *   bluetoothDeviceGattServer.connect() is fired. The return value of this 
+ *   command is not settled until ~3.5s of handshaking.
  * 
  * ver 0.12
  * - changed the firmware update routine.
@@ -283,7 +287,7 @@ connectButton.addEventListener("click", async function () {
     classList.add("w3-light-green"); 
     
     await delay_ms(NORMAL_DELAY_TIME);
-    
+
     // GATT operation in progress
     getCharacteristic(SERVICE_UUID, CHARACTERISTIC_FILE_UUID)
     .then(async (characteristic) => {
@@ -1010,6 +1014,7 @@ async function connect() {
     // Connect to the bluetooth device
     requestBluetoothDevice()
     .then((gattServer) => {
+      // copy the original value from gattServer object reference
       log("Device: " + gattServer.connected);
       if (gattServer.connected) {
         document.getElementById("control-panel-container").style.display = "block";
@@ -1080,6 +1085,7 @@ async function reconnect() {
         return new Promise(async(resolve, reject) => {
           time("Try to reconnect with BLE device");
           await bluetoothDeviceGattServer.connect();
+          await delay_ms(3500);
           if(bluetoothDeviceGattServer.connected) {
             resolve("connected");
           }
@@ -1103,7 +1109,7 @@ async function requestBluetoothDevice() {
     filters: [{ namePrefix: "ESP32"/*"dali_test"*/ }],
     optionalServices: [SERVICE_UUID],
   };
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
       log("Requesting bluetooth device...");
       navigator.bluetooth.requestDevice(options)
       .then((bluetoothDeviceObject) => {
@@ -1122,14 +1128,16 @@ async function requestBluetoothDevice() {
         // }
         return bluetoothDevice;
       })
-      .then((device) =>{
+      .then(async (device) =>{
         log(device);
         gatt_connect(device)
-        .then((gattServer) => {
+        .then(async (gattServer) => {
           bluetoothDeviceGattServer = gattServer;
-          log("server connceted");
+          // wait 3.5s and then evaluate the connection status
+          await delay_ms(3500);
           log(bluetoothDeviceGattServer);
-          resolve(gattServer);
+          var promise = gattServer;
+          resolve(promise);
         })
         .catch((error) => {
           reject(error);
@@ -1146,6 +1154,10 @@ async function gatt_connect(device) {
   return new Promise((resolve, reject) => {
     device.gatt.connect()
     .then((gattServer) => {
+      // the value is evaluated without expanding the object reference.
+      // .connected contains the default value
+      // JSON.stringify(...)
+      log(JSON.stringify(gattServer));
       deviceConnected = device.gatt.connected;
       if (deviceConnected == true) {
         // characteristic_presentation_format
@@ -1162,6 +1174,7 @@ async function gatt_connect(device) {
         // try to reconnect instead of do nth
         reconnect()
         .then((promise) => {
+          time(promise);
           resolve("(re)connected");
         })
         // if still cannot connect to the device, alert the user to restart the BLE server
@@ -1198,7 +1211,37 @@ async function getService(service_uuid) {
   log("> getting gatt service");
   return new Promise((resolve, reject) => {
     // Connected properties may be FALSE since the instance is copied during the gattServer.connect() process
-    return bluetoothDeviceGattServer.getPrimaryService(service_uuid)
+    
+    // evaluate the connect property in gattServer before getPrimaryService(). try reconnect() routine
+    if(!bluetoothDeviceGattServer.connected){
+      reconnect()
+      .then((promise) => {
+        log("(re)connected");
+
+        return bluetoothDeviceGattServer.getPrimaryService(service_uuid)
+        .then((service) => {
+          resolve(service);
+        })
+        .catch((error) =>{
+          // log("GATT Server is disconnected.");
+          alert(error);
+          document.getElementById("device-connection-display-status").innerHTML = "Disconnected";
+          document.getElementById("control-panel-container").style.display = "none";
+
+          var classList = document.getElementById("device-connection-text-box").classList;
+          classList.remove("w3-light-grey", "w3-light-green");
+          classList.add("w3-red");
+          
+          reject(error);
+        });
+      })
+      // if still cannot connect to the device, alert the user to restart the BLE server
+      .catch((error) => {
+        reject("Cannot connect to BLE device");
+      });
+    }
+    else{
+      return bluetoothDeviceGattServer.getPrimaryService(service_uuid)
       .then((service) => {
         resolve(service);
       })
@@ -1214,6 +1257,7 @@ async function getService(service_uuid) {
         
         reject(error);
       });
+    }
   });
 }
 
@@ -1803,7 +1847,7 @@ async function renewBusInfoOnBLEServer() {
 async function exponentialBackoff(max, delay, toTry, success, fail) {
   try {
     const result = await toTry();
-    success(result);
+    return success(result);
   } catch(error) {
     if (max === 0) {
       return fail();
