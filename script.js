@@ -305,7 +305,7 @@ connectButton.addEventListener("click", async function () {
       return "promise";
     })
     .then(async(promise) => {
-      await delay_ms(100);
+      await delay_ms(NORMAL_DELAY_TIME);
       getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
       .then((characteristic) => {
         characteristic.startNotifications()
