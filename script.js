@@ -1015,7 +1015,7 @@ async function connect() {
     requestBluetoothDevice()
     .then((gattServer) => {
       // copy the original value from gattServer object reference
-      log("Device: " + gattServer.connected);
+      time("Device: " + gattServer.connected);
       if (gattServer.connected) {
         document.getElementById("control-panel-container").style.display = "block";
         document.getElementById("read-control-gear-container").style.display = "block";
@@ -1034,7 +1034,7 @@ async function connect() {
 
       }
       else {
-        alert("Cannot connect the controller. Please turn it off and on.");
+        log("reconnecting");
         document.getElementById("read-control-gear-container").style.display = "none";
       }
       resolve("promise");
@@ -1099,6 +1099,7 @@ async function reconnect() {
       },
       function fail(){
         reject("Failed to reconnect.");
+        loading_screen.style.display = "none";
       }
     );
   })
