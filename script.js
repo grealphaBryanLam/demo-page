@@ -1,19 +1,31 @@
 /** 
- * @version 0.13
+ * @version 0.16
  * @status debug
  * 
  * @issue
- * - return error when calling gattCharacteristic.startNotification: "GATT server is disconnected."
+ * - [A] the GATTServer's property changes after its evaluation
+ *  - cannot get deep copy of GATTServer object since the object has not iterable protocol
+ *  - use global reference (bluetoothDeviceGattServer) instead of
  * 
  * @todo
- * - [DOING] add routine for close the SPA of data transfer after update firmware via Wi-Fi
  * - [A] fix the issue that client cannot perform some action by the time receiving new characteristic
  * - renew short/group address by using GTIN and ID before renewBusInfoOnBLEServer()
  *  - reset the layout after the firmware update process is completed 
  * 
  * @changelog
+ * ver 0.16
+ * - changed the condition (#1188) for requestBluetoothDevice(). Avoid event "value changed after evaluation"
+ * - added pop-up to remind users closing the window of file transfer
+ * 
+ * ver 0.15
+ * - do not accept binary file (.bin) since the production code of ATtiny series is in .hex format. 
+ * 
+ * ver 0.14
+ * - added settling time for handshaking should include transmission delay 
+ *   between web hosting server and desktop/control device
+ * 
  * ver 0.13
- * - [DOING] changed the waiting approach of SPIFFS formatting
+ * - changed the waiting approach of SPIFFS formatting
  * - object BluetoothRemoteGattServer is not iterable.
  * - this client checks whether the connection is established after function 
  *   bluetoothDeviceGattServer.connect() is fired. The return value of this 
@@ -111,9 +123,13 @@ const ID_WORD_SIZE_IN_BYTES = 17; /* 16 bytes data + 1 byte blank character */
 const FILE_PICKER_OPTIONS = {
   types:[
     {
-      description: "Bin/Hex Dump",
+      // description: "Bin/Hex Dump",
+      // accept: {
+      //   "bin/hex": ['.bin', '.hex'],
+      // },
+      description: "Hex Dump",
       accept: {
-        "bin/hex": ['.bin', '.hex'],
+        "hex": ['.hex'],
       }
     },
   ],
@@ -143,6 +159,7 @@ Object.freeze(REPLY_STR_BUF_TYPE);
 const TRANSMISSION_DELAY_MS = 500;
 
 var bluetoothDevice;
+// global object reference to gattServer instance
 var bluetoothDeviceGattServer;
 
 var buffer;
@@ -1090,9 +1107,11 @@ async function reconnect() {
           await delay_ms(3500 + TRANSMISSION_DELAY_MS);
           if(bluetoothDeviceGattServer.connected) {
             resolve("connected");
+            log("reconnect");
           }
           else{
             reject("cannot connect");
+            log("fail to reconnect");
           }
         })
       },
@@ -1135,12 +1154,11 @@ async function requestBluetoothDevice() {
         log(device);
         gatt_connect(device)
         .then(async (gattServer) => {
-          bluetoothDeviceGattServer = gattServer;
+          // bluetoothDeviceGattServer = gattServer;
           // wait 3.5s and then evaluate the connection status
           await delay_ms(3500 + TRANSMISSION_DELAY_MS);
           log(bluetoothDeviceGattServer);
-          var promise = gattServer;
-          resolve(promise);
+          resolve(bluetoothDeviceGattServer);
         })
         .catch((error) => {
           reject(error);
@@ -1160,9 +1178,17 @@ async function gatt_connect(device) {
       // the value is evaluated without expanding the object reference.
       // .connected contains the default value
       // JSON.stringify(...)
+      // object is not iterable
+      // [research] get the deep copy of specific property
       log(JSON.stringify(gattServer));
+      /** [refer to issue] the value changed after evaluation. 
+       * (e.g. .connected property = true, but handshaking is failed 
+       * on the lower-level) 
+      */
+      bluetoothDeviceGattServer = gattServer;
       deviceConnected = device.gatt.connected;
-      if (deviceConnected == true) {
+      // global reference resolves one case of unexpected change (i.e. true -> false)
+      if (/*deviceConnected == true && */bluetoothDeviceGattServer.connected /*global reference*/== true) {
         // characteristic_presentation_format
         // alert("characteristic format: " + device.gatt.characteristic_presentation_format);
         log("> Bluetooth Device connected");
@@ -1171,10 +1197,10 @@ async function gatt_connect(device) {
       }
       // blueTooth device object acquired but not connected 
       else{
-        /**
-         * @TODO
-         */
-        // try to reconnect instead of do nth
+        /** [refer to issue] the value changed after evaluation. 
+         * (e.g. .connected property = flase, but handshaking has been completed 
+         * on the lower-level) 
+        */
         reconnect()
         .then((promise) => {
           time(promise);
@@ -1234,7 +1260,7 @@ async function getService(service_uuid) {
           var classList = document.getElementById("device-connection-text-box").classList;
           classList.remove("w3-light-grey", "w3-light-green");
           classList.add("w3-red");
-          
+
           reject(error);
         });
       })
@@ -1541,6 +1567,7 @@ async function getMTUsize() {
   });
 }
 
+/* Deceprated: Using Wi-Fi for file transfer */
 function divideDataIntoChunks(data, ble_mtu_size){
   log("data size: " + data.byteLength);
   log("MTU: " + ble_mtu_size);
@@ -1853,6 +1880,7 @@ async function exponentialBackoff(max, delay, toTry, success, fail) {
     return success(result);
   } catch(error) {
     if (max === 0) {
+      alert("Attempts exceed threshold value");
       return fail();
     }
     time('Retrying in ' + delay + 's... (' + max + ' tries left)');
@@ -2144,6 +2172,11 @@ async function btFileCharacteristicNotifyHandler(event){
   }
   if(str_buf.toString() == "Y"){
     alert("BT notification: Firmware update transfer completed");
+    /** Re-assign short address to specific devices is not possible. 
+     * execute commissioning sequence afterwards.
+     * the control is hidden, therefore, routine in "read_control_gear" can be reused.
+    */
+    
   }
   else if(str_buf.toString() == "G"){
     alert("BT notification: NO control gear exist");
@@ -2178,6 +2211,8 @@ async function btFileCharacteristicNotifyHandler(event){
     // await updateBusInfoOnScreen();
     document.getElementById("selected-control-gear-container").style.display = "none";
     document.getElementById("device-control-dashboard-container").style.display = "none";
+    // 
+    // alert("IEC62386-105 process completed.");
     loading_screen.style.display = "none";
   }
 
