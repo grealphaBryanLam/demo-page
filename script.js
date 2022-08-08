@@ -1,16 +1,46 @@
 /** 
- * @version 0.10
+ * @version 0.16
  * @status debug
  * 
+ * @issue
+ * - [A] the GATTServer's property changes after its evaluation
+ *  - cannot get deep copy of GATTServer object since the object has not iterable protocol
+ *  - use global reference (bluetoothDeviceGattServer) instead of
+ * 
  * @todo
- * - fix the issue that client cannot perform some action by the time receiving new characteristic
+ * - [A] fix the issue that client cannot perform some action by the time receiving new characteristic
  * - renew short/group address by using GTIN and ID before renewBusInfoOnBLEServer()
  *  - reset the layout after the firmware update process is completed 
- * - (optional) show device type of the selected control gear:
  * 
  * @changelog
+ * ver 0.16
+ * - changed the condition (#1188) for requestBluetoothDevice(). Avoid event "value changed after evaluation"
+ * - added pop-up to remind users closing the window of file transfer
+ * 
+ * ver 0.15
+ * - do not accept binary file (.bin) since the production code of ATtiny series is in .hex format. 
+ * 
+ * ver 0.14
+ * - added settling time for handshaking should include transmission delay 
+ *   between web hosting server and desktop/control device
+ * 
+ * ver 0.13
+ * - changed the waiting approach of SPIFFS formatting
+ * - object BluetoothRemoteGattServer is not iterable.
+ * - this client checks whether the connection is established after function 
+ *   bluetoothDeviceGattServer.connect() is fired. The return value of this 
+ *   command is not settled until ~3.5s of handshaking.
+ * 
+ * ver 0.12
+ * - changed the firmware update routine.
+ * 
+ * ver 0.11
+ * - added command "BLE_CMD_START_WIFI_ADVERTISMENT": for firmware update process
+ * - fixed the issue of race condition when connecting to the ble server (startNotification)
+ * 
  * ver 0.10
- * - Add/Remove/Go-To Scenes 
+ * - Add/Remove/Go-To Scenes
+ * - modified connect routine: hide loading screen after notifications are set.
  * 
  * ver 0.9
  * - added getAllControlGearID() to update routine
@@ -79,6 +109,7 @@ const BLE_CMD_BEGIN_FILE_TRANSFER                     = " 501 ";
 const BLE_CMD_END_FILE_TRANSFER                       = " 502 ";
 const BLE_CMD_FORMAT_SPIFFS                           = " 600 ";
 const BLE_CMD_EXIT_INITIALIZATION                     = " 601 ";
+const BLE_CMD_START_WIFI_ADVERTISMENT                 = " 800 ";
 
 const SET_SCENE_BASE = 305;
 const REMOVE_SCENE_BASE = 321;
@@ -92,9 +123,13 @@ const ID_WORD_SIZE_IN_BYTES = 17; /* 16 bytes data + 1 byte blank character */
 const FILE_PICKER_OPTIONS = {
   types:[
     {
-      description: "Bin/Hex Dump",
+      // description: "Bin/Hex Dump",
+      // accept: {
+      //   "bin/hex": ['.bin', '.hex'],
+      // },
+      description: "Hex Dump",
       accept: {
-        "bin/hex": ['.bin', '.hex'],
+        "hex": ['.hex'],
       }
     },
   ],
@@ -113,13 +148,18 @@ const COMMISSIONING_TIME_LIMIT = (15 * 60 * 1000);
 
 const DEBUG_SHORT_ADDRESS = 0;
 
+const DATA_BLOCK_OVERHEAD_SIZE = 14;
+
 const REPLY_STR_BUF_TYPE = {
   SHORT_ADDRESS: 0,
   SCENE_VALUE: 1,
 };
 Object.freeze(REPLY_STR_BUF_TYPE);
 
+const TRANSMISSION_DELAY_MS = 500;
+
 var bluetoothDevice;
+// global object reference to gattServer instance
 var bluetoothDeviceGattServer;
 
 var buffer;
@@ -174,6 +214,25 @@ null_option.id = "";
 null_option.value = "";
 null_option.textContent = "";
 
+var ble_wifi_button_pressed = 0;
+
+var firmware_update_file_object;
+var file_date_of_release;
+var date_of_release;
+
+// var device_found = false;
+var connectedDevicesList = new Array();
+
+var formatCompleted = false;
+// 2022-06-21
+// struct of each control gear
+const CONTROL_GEAR_INFO = function(short_address, group_address, gtin, id){
+  this.short_address = short_address;
+  this.group_address = group_address;
+  this.gtin = gtin;
+  this.id = id;
+}
+
 let connectButton = document.getElementById("connect");
 let disconnectButton = document.getElementById("disconnect");
 let ledOn = document.getElementById("led-on");
@@ -223,6 +282,8 @@ let set_dapc_scene_button =  document.getElementById("set-dapc-scene-button");
 let remove_dapc_scene_number = document.getElementById("remove-dapc-scene-number");
 let remove_dapc_scene_button = document.getElementById("remove-dapc-scene-button"); 
 
+let recall_control_gear = document.getElementById("recall-control-gear");
+
 // DEBUG
 let readCharacteristic = document.getElementById("read-ble-characteristic");
 let writeCharacteristic = document.getElementById("write-ble-characteristic");
@@ -232,46 +293,66 @@ let ble_cmd_end_file_transfer_button = document.getElementById("ble-cmd-end-file
 let control_gear_commissioning_button = document.getElementById("control-gear-commissioning-button");
 let get_all_control_gear_device_types_button = document.getElementById("get-all-control-gear-device-types-button");
 let http_post_send_data = document.getElementById("http-post-send-data");
+let ble_wifi_button = document.getElementById("stop-BLE-start-wifi-button")
+
 
 connectButton.addEventListener("click", async function () {
   var classList = document.getElementById("device-connection-text-box").classList;
 
   loading_screen.style.display = "block";
   connect()
-  .then((promise) => {
+  .then(async (promise) => {
     classList.remove("w3-light-grey", "w3-red");
-    classList.add("w3-light-green");    
+    classList.add("w3-light-green"); 
+    
+    await delay_ms(NORMAL_DELAY_TIME);
+
     // GATT operation in progress
     getCharacteristic(SERVICE_UUID, CHARACTERISTIC_FILE_UUID)
-    .then((characteristic) => {
+    .then(async (characteristic) => {
       characteristic.startNotifications()
       .then((characteristic) => {
         time("wait FILE notification");
+      })
+      .catch((error) => {
+        time(error);
       });
-
+      // does the android phone know the notification bit(s) are set?
       characteristic.addEventListener("characteristicvaluechanged", btFileCharacteristicNotifyHandler);
-    });
-
-    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
-    .then((characteristic) => {
-      characteristic.startNotifications()
+      return "promise";
+    })
+    .then(async(promise) => {
+      await delay_ms(NORMAL_DELAY_TIME);
+      getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
       .then((characteristic) => {
-        time("wait CMD notification");
+        characteristic.startNotifications()
+        .then((characteristic) => {
+          time("wait CMD notification");
+          loading_screen.style.display = "none";
+        });
+        characteristic.addEventListener("characteristicvaluechanged", btCmdCharacteristicNotifyHandler);
+      })
+      .catch((error) => {
+        time(error);
         loading_screen.style.display = "none";
       });
-
-      characteristic.addEventListener("characteristicvaluechanged", btCmdCharacteristicNotifyHandler);
-    });
-
-    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_DEBUG_UUID)
-    .then((characteristic) => {
-      characteristic.startNotifications()
-      .then((characteristic) => {
-        time("wait DEBUG notification");
-      });
-
-      characteristic.addEventListener("characteristicvaluechanged", btDebugCharacteristicNotifyHandler);
+      return "promise";
     })
+    .then(async(promise) => {
+      await delay_ms(NORMAL_DELAY_TIME);
+      getCharacteristic(SERVICE_UUID, CHARACTERISTIC_DEBUG_UUID)
+      .then((characteristic) => {
+        characteristic.startNotifications()
+        .then((characteristic) => {
+          time("wait DEBUG notification");
+        });
+
+        characteristic.addEventListener("characteristicvaluechanged", btDebugCharacteristicNotifyHandler);
+      })
+      .catch((error) => {
+        time(error);
+      });
+    });
   })
   .catch((error) => {
     loading_screen.style.display = "none";
@@ -541,6 +622,7 @@ read_control_gear.addEventListener("click", async function () {
     })
     .then((promise) => {
       document.getElementById("selected-control-gear-container").style.display = "block";
+      document.getElementById("firmware-update-group-address-selection-container").style.display = "block";
       loading_screen.style.display = "none";
     });
   })
@@ -584,108 +666,94 @@ firmware_update_button.addEventListener("click", async function () {
 
   loading_screen.style.display = "block";
   // replace the fetch method with file system handle
-  isValidFile()
-  .then(async (data) => {
+  // isValidFile()
+  // .then(async (data) => {
     // // format SPIFFS
-    formatSPIFFS(); 
-    
-    // // check the initialization value from CMD characteristic
-    // // wait for 25s. Device takes around 20s to initalize 
-    await delay_ms(25000);
-
-    return reconnect()
-    .then(async (resolve) => {
-      // get MTU size from the MCU
-      return getMTUsize()
-      .then(async (promise) => {
-        /**
-         * @NOTE potential issue of the update process the re-generated short address
-         *        routine should be get back the new value from the controller
-        */
-        // Set all bus info
-        return renewBusInfoOnBLEServer()
+    formatSPIFFS() 
+    .then(async (promise) => {
+      isFormatCompleted()
+      .then(async(promise) => {
+        log("format completed");
+        return reconnect()
+        .then(async (resolve) => {
+          // get MTU size from the MCU
+          return getMTUsize()
           .then(async (promise) => {
-            /* Get all bus info */
-            getAllControlGearGTIN()
-            .then(async (promise) => {
-              await delay_ms(NORMAL_DELAY_TIME);
-              // return getAllControlGearID()
-              // .then(async (promise) => {
-                // await delay_ms
-              return getAllControlGearGroupAddress();
-              // })
-            })
-            .then(async (promise) => {
-              log("change FW update address");
-              return updateFWUGroupAddress()
-              .then(async (promise) =>{
-                /** Divide the data into chunks based on MTU size 
-                 * expected test result (test.hex): 
-                 * => 12393 Bytes / (MTU size)
-                 * => 25 data chunks to transfer the test file
-                 */ 
-                return divideDataIntoChunks(data, ble_mtu_size);
-              })
-              .then(async (chunks) => {
-                log(chunks);
-                await delay_ms(NORMAL_DELAY_TIME);
-            
-                // send cmd to indicate START file transfer 
-                getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
-                .then((characteristic) => {
-                  // characteristic.writeValueWithoutResponse(asciiToUint8Array(control_gear_short_address.toString() + " 501 0"));
-                  characteristic.writeValueWithoutResponse(
-                    asciiToUint8Array(firmware_update_address.toString() + BLE_CMD_BEGIN_FILE_TRANSFER + (0).toString())
-                  );
-                });
-            
-                await delay_ms(300);
-            
-                /* Send data chunks */
-                log("chunk length: " + chunks.length);
-                for(var i = 0; i < chunks.length; i++) {
-                  getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+            getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
                   .then((characteristic) => {
-                    characteristic.writeValueWithResponse(chunks[i]);
-                    // add loading screen or show alert 
-                    // also disable other buttons to aviod interrupt
+                    characteristic.writeValueWithoutResponse(
+                      asciiToUint8Array(firmware_update_address.toString() + BLE_CMD_BEGIN_FILE_TRANSFER + (0).toString())
+                    )
                   });
-                  
-                  await delay_ms(1000);
-                }
-            
-                /* Send END transfer command*/
-                getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
-                .then((characteristic) => {
-                  // characteristic.writeValueWithoutResponse(asciiToUint8Array(control_gear_short_address.toString() + " 502 0"));
-                  log("END file transfer");
-                  return characteristic.writeValueWithResponse(
-                    asciiToUint8Array(firmware_update_address.toString() + BLE_CMD_END_FILE_TRANSFER + (0).toString())
-                  );
-                })
-                .then((promise) => {
-                  log(promise);
-            
-                  // getCharacteristic(SERVICE_UUID, CHARACTERISTIC_FILE_UUID)
-                  // .then((characteristic) => {
-                  //   characteristic.startNotifications()
-                  //   .then((characteristic) => {
-                  //     time("wait notification");
-                  //   });
-            
-                  //   characteristic.addEventListener("characteristicvaluechanged", btFileCharacteristicNotifyHandler);
-                  // });
-                });
-              });
-            });
-
+  
+            alert("Please connect to the Wi-Fi Access Point DALI_GATEWAY\
+              \nUse IP \"192.168.4.1\" to upload file.");
+            loading_screen.style.display = "block";
+            /**
+             * @NOTE potential issue of the update process the re-generated short address
+             *        routine should be get back the new value from the controller
+            */
+            // Set all bus info
+            // return renewBusInfoOnBLEServer()
+            // .then(async (promise) => {
+            //   /* Get all bus info */
+            //   getAllControlGearGTIN()
+            //   .then(async (promise) => {
+            //     await delay_ms(NORMAL_DELAY_TIME);
+            //     // return getAllControlGearID()
+            //     // .then(async (promise) => {
+            //       // await delay_ms
+            //     return getAllControlGearGroupAddress();
+            //     // })
+            //   })
+            //   .then(async (promise) => {
+            //     log("change FW update address");
+            //    return updateFWUGroupAddress()
+            //     .then(async (promise) =>{
+            //       /** Divide the data into chunks based on MTU size 
+            //        * expected test result (test.hex): 
+            //        * => 12393 Bytes / (MTU size)
+            //        * => 25 data chunks to transfer the test file
+            //        */ 
+            //       getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+            //       .then((characteristic) => {
+            //         characteristic.writeValueWithoutResponse(
+            //           asciiToUint8Array(firmware_update_address.toString() + BLE_CMD_BEGIN_FILE_TRANSFER + (0).toString())
+            //         )
+            //       });
+  
+            //       alert("Please connect to the Wi-Fi Access Point DALI_GATEWAY\
+            //       Use IP \"192.168.4.1\" to upload file.");
+            //       loading_screen.style.display = "block";
+            //     })
+            //   });
+            // });
           });
-      });
+        })
+        .catch((error) => {
+          alert("error caught: reconnect");
+        });
+      })
     })
-    .catch((error) => {
-      alert("error caught: reconnect");
-    });
-  });
+
+    // check the initialization value from CMD characteristic
+    // wait for 15s. Device takes around 14.5s to initalize 
+    // await delay_ms(15000);
+
+    // return getMTUsize()
+    //   .then(async (promise) => {
+    //     getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+    //     .then((characteristic) => {
+    //       characteristic.writeValueWithoutResponse(
+    //         asciiToUint8Array((240).toString() + BLE_CMD_BEGIN_FILE_TRANSFER + (0).toString())
+    //       )
+    //       .then((promise) => {
+    //         loading_screen.style.display = "none";
+    //       })
+    //     });
+    //   });
+    
+  // });
 
   /* clear loading screen when BT notification received */
   /* also update all options in menus */
@@ -965,13 +1033,27 @@ async function connect() {
     // Connect to the bluetooth device
     requestBluetoothDevice()
     .then((gattServer) => {
-      log("Device: " + gattServer.connected);
+      // copy the original value from gattServer object reference
+      time("Device: " + gattServer.connected);
       if (gattServer.connected) {
         document.getElementById("control-panel-container").style.display = "block";
         document.getElementById("read-control-gear-container").style.display = "block";
+
+        /** show the short address(es) menu once connected to the same device 
+         * lookup table should be exist if multiple devices are connected
+        */
+
+        /** allow users to skip scanning DALI network if this client have connected once */
+        if(ble_wifi_button_pressed > 0){
+          document.getElementById("recall-control-gear").style.display = "block";
+        }
+        else{
+          document.getElementById("recall-control-gear").style.display = "none";
+        }
+
       }
       else {
-        alert("Cannot connect the controller. Please turn it off and on.");
+        log("reconnecting");
         document.getElementById("read-control-gear-container").style.display = "none";
       }
       resolve("promise");
@@ -1022,11 +1104,14 @@ async function reconnect() {
         return new Promise(async(resolve, reject) => {
           time("Try to reconnect with BLE device");
           await bluetoothDeviceGattServer.connect();
+          await delay_ms(3500 + TRANSMISSION_DELAY_MS);
           if(bluetoothDeviceGattServer.connected) {
             resolve("connected");
+            log("reconnect");
           }
           else{
             reject("cannot connect");
+            log("fail to reconnect");
           }
         })
       },
@@ -1035,6 +1120,7 @@ async function reconnect() {
       },
       function fail(){
         reject("Failed to reconnect.");
+        loading_screen.style.display = "none";
       }
     );
   })
@@ -1045,22 +1131,34 @@ async function requestBluetoothDevice() {
     filters: [{ namePrefix: "ESP32"/*"dali_test"*/ }],
     optionalServices: [SERVICE_UUID],
   };
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
       log("Requesting bluetooth device...");
       navigator.bluetooth.requestDevice(options)
       .then((bluetoothDeviceObject) => {
         bluetoothDevice = bluetoothDeviceObject;
-        // log(bluetoothDevice);
+        /* check the device connected in this session */
+        var index = 0;
+        // use when the user requires to connect multiple devices
+        // device_found = false;
+        // while(connectedDevicesList.legth > 0 && !found){
+        //   if(connectedDevicesList.at(index) == bluetoothDevice.id){
+        //     device_found = true;
+        //   }
+        // }
+        // if(!device_found){
+        //   connectedDevicesList.append(bluetoothDevice.id);
+        // }
         return bluetoothDevice;
       })
-      .then((device) =>{
+      .then(async (device) =>{
         log(device);
         gatt_connect(device)
-        .then((gattServer) => {
-          bluetoothDeviceGattServer = gattServer;
-          log("server connceted");
+        .then(async (gattServer) => {
+          // bluetoothDeviceGattServer = gattServer;
+          // wait 3.5s and then evaluate the connection status
+          await delay_ms(3500 + TRANSMISSION_DELAY_MS);
           log(bluetoothDeviceGattServer);
-          resolve(gattServer);
+          resolve(bluetoothDeviceGattServer);
         })
         .catch((error) => {
           reject(error);
@@ -1077,20 +1175,35 @@ async function gatt_connect(device) {
   return new Promise((resolve, reject) => {
     device.gatt.connect()
     .then((gattServer) => {
+      // the value is evaluated without expanding the object reference.
+      // .connected contains the default value
+      // JSON.stringify(...)
+      // object is not iterable
+      // [research] get the deep copy of specific property
+      log(JSON.stringify(gattServer));
+      /** [refer to issue] the value changed after evaluation. 
+       * (e.g. .connected property = true, but handshaking is failed 
+       * on the lower-level) 
+      */
+      bluetoothDeviceGattServer = gattServer;
       deviceConnected = device.gatt.connected;
-      if (deviceConnected == true) {
+      // global reference resolves one case of unexpected change (i.e. true -> false)
+      if (/*deviceConnected == true && */bluetoothDeviceGattServer.connected /*global reference*/== true) {
+        // characteristic_presentation_format
+        // alert("characteristic format: " + device.gatt.characteristic_presentation_format);
         log("> Bluetooth Device connected");
         document.getElementById("device-connection-display-status").innerHTML = "Connected";
         resolve(gattServer);
       }
       // blueTooth device object acquired but not connected 
       else{
-        /**
-         * @TODO
-         */
-        // try to reconnect instead of do nth
+        /** [refer to issue] the value changed after evaluation. 
+         * (e.g. .connected property = flase, but handshaking has been completed 
+         * on the lower-level) 
+        */
         reconnect()
         .then((promise) => {
+          time(promise);
           resolve("(re)connected");
         })
         // if still cannot connect to the device, alert the user to restart the BLE server
@@ -1127,7 +1240,37 @@ async function getService(service_uuid) {
   log("> getting gatt service");
   return new Promise((resolve, reject) => {
     // Connected properties may be FALSE since the instance is copied during the gattServer.connect() process
-    return bluetoothDeviceGattServer.getPrimaryService(service_uuid)
+    
+    // evaluate the connect property in gattServer before getPrimaryService(). try reconnect() routine
+    if(!bluetoothDeviceGattServer.connected){
+      reconnect()
+      .then((promise) => {
+        log("(re)connected");
+
+        return bluetoothDeviceGattServer.getPrimaryService(service_uuid)
+        .then((service) => {
+          resolve(service);
+        })
+        .catch((error) =>{
+          // log("GATT Server is disconnected.");
+          alert(error);
+          document.getElementById("device-connection-display-status").innerHTML = "Disconnected";
+          document.getElementById("control-panel-container").style.display = "none";
+
+          var classList = document.getElementById("device-connection-text-box").classList;
+          classList.remove("w3-light-grey", "w3-light-green");
+          classList.add("w3-red");
+
+          reject(error);
+        });
+      })
+      // if still cannot connect to the device, alert the user to restart the BLE server
+      .catch((error) => {
+        reject("Cannot connect to BLE device");
+      });
+    }
+    else{
+      return bluetoothDeviceGattServer.getPrimaryService(service_uuid)
       .then((service) => {
         resolve(service);
       })
@@ -1143,6 +1286,7 @@ async function getService(service_uuid) {
         
         reject(error);
       });
+    }
   });
 }
 
@@ -1423,6 +1567,7 @@ async function getMTUsize() {
   });
 }
 
+/* Deceprated: Using Wi-Fi for file transfer */
 function divideDataIntoChunks(data, ble_mtu_size){
   log("data size: " + data.byteLength);
   log("MTU: " + ble_mtu_size);
@@ -1454,12 +1599,18 @@ function divideDataIntoChunks(data, ble_mtu_size){
 }
 
 function formatSPIFFS() {
-  getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
-  .then((characteristic) => {
-    characteristic.writeValueWithoutResponse(
-      /* only command word is meaningful, address word and value word are discarded */
-      asciiToUint8Array((0).toString() + BLE_CMD_FORMAT_SPIFFS + (0).toString())
-    );
+  return new Promise((resolve, reject) => {
+    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+    .then((characteristic) => {
+      characteristic.writeValueWithoutResponse(
+        /* only command word is meaningful, address word and value word are discarded */
+        asciiToUint8Array((0).toString() + BLE_CMD_FORMAT_SPIFFS + (0).toString())
+      )
+      .then((promise) => {
+        resolve(promise);
+      })
+    });
+    /* "N" should be received after formatting */
   });
 }
 
@@ -1726,9 +1877,10 @@ async function renewBusInfoOnBLEServer() {
 async function exponentialBackoff(max, delay, toTry, success, fail) {
   try {
     const result = await toTry();
-    success(result);
+    return success(result);
   } catch(error) {
     if (max === 0) {
+      alert("Attempts exceed threshold value");
       return fail();
     }
     time('Retrying in ' + delay + 's... (' + max + ' tries left)');
@@ -1745,6 +1897,7 @@ function time(text) {
 function handleFiles() {
   const fileList = this.files;
   // suppose only one file is selected
+  firmware_update_file_object = fileList[0];
   file_name = fileList[0].name;
   if(file_name !== "undefined"){ // File is selected
     // show options for user to update (indivdual device / same product)
@@ -1820,7 +1973,7 @@ async function isCommissionFinished() {
       log("commission finished: " + commissionFinished);
     }
     clearTimeout(timeout_event_id);
-    alert("escape from while loop");
+    // alert("escape from while loop");
     resolve("commissioning completed");
   });
 }
@@ -2019,12 +2172,32 @@ async function btFileCharacteristicNotifyHandler(event){
   }
   if(str_buf.toString() == "Y"){
     alert("BT notification: Firmware update transfer completed");
+    /** Re-assign short address to specific devices is not possible. 
+     * execute commissioning sequence afterwards.
+     * the control is hidden, therefore, routine in "read_control_gear" can be reused.
+    */
+    
   }
   else if(str_buf.toString() == "G"){
     alert("BT notification: NO control gear exist");
   }
   else if(str_buf.toString() == "F"){
     alert("BT notification: Firmware update failed");
+  }
+  else if(str_buf.toString() == "S"){
+    /* "S" indicates the data is stored in SPIFFS*/
+    alert("BT notification: data is saved in SPIFFS");
+    sendBleCmd(firmware_update_address, BLE_CMD_END_FILE_TRANSFER, 0)
+    .then((promise) =>{
+      log("Controller starts IEC62386-105 procedure");
+    });
+    // loading_screen.style.display = "none";
+  }
+  else if(str_buf.toString() == "N"){
+    /* "N" -> the filesystem is formatted */
+    // reset the flag
+    formatCompleted = true;
+    log("SPIFFS partition is formatted");
   }
 
   if(str_buf.toString() == "B"
@@ -2038,6 +2211,8 @@ async function btFileCharacteristicNotifyHandler(event){
     // await updateBusInfoOnScreen();
     document.getElementById("selected-control-gear-container").style.display = "none";
     document.getElementById("device-control-dashboard-container").style.display = "none";
+    // 
+    // alert("IEC62386-105 process completed.");
     loading_screen.style.display = "none";
   }
 
@@ -2068,7 +2243,7 @@ async function btDebugCharacteristicNotifyHandler(event){
   if(str_buf.toString() == "R"){
     commissionFinished = true;
     // log("notification received");
-    alert("notification value" + str_buf.toString());
+    log("notification value" + str_buf.toString());
   }
   else{
     alert(str_buf);
@@ -2185,7 +2360,7 @@ async function parseWordsSeparatedBySpace(str_buf, str_type /** short address, s
         start_index = i;
       }
     }
-    /* available_control_gear is the array of short addresses */
+
     if(str_type == REPLY_STR_BUF_TYPE.SCENE_VALUE){
       scene_value = new Array();
       for (var i = 0; i < sliced_word_buf.length; i++) {
@@ -2195,6 +2370,7 @@ async function parseWordsSeparatedBySpace(str_buf, str_type /** short address, s
       resolve(scene_value);
     }
     else if(str_type == REPLY_STR_BUF_TYPE.SHORT_ADDRESS){
+      /* available_control_gear is the array of short addresses */
       availiable_control_gear = new Array();
       var num_of_availiable_control_gear = 0;
       for (var i = 0; i < sliced_word_buf.length; i++) {
@@ -2430,5 +2606,77 @@ async function refreshDAPCSceneMenu(){
         });
       });
     });
+  });
+}
+
+ble_wifi_button.addEventListener("click", function(){
+  ble_wifi_button_pressed++;
+  /** send command to ESP32: BLE_CMD_START_WIFI_ADVERTISMENT
+   * It is a no-reply command: the BLE server is not supppose to exist anymore
+   */
+  getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+  .then((characteristic) => {
+    characteristic.writeValueWithoutResponse(
+      asciiToUint8Array((0).toString() + BLE_CMD_START_WIFI_ADVERTISMENT + (0).toString())
+    )
+    .then((promise) => {
+      disconnect()
+      .then((promise) => {
+        var classList = document.getElementById("device-connection-text-box").classList;
+        log("caught error: disconnect()");
+        classList.remove("w3-light-green", "w3-light-red");
+        classList.add("w3-light-grey");
+      });
+    })
+  });
+});
+
+recall_control_gear.addEventListener("click", function(){
+  // show the container
+  document.getElementById("control-panel-container").style.display = "block";
+  document.getElementById("selected-control-gear-container").style.display = "block";
+});
+
+function fileDescriptionGenerator(){
+  var date_buf = new Date(firmware_update_file_object.lastModified);
+  log(date_buf);
+  date_of_release = date_buf.getFullYear().toString() + "-";
+  // return of getMonth() is zero-based
+  date_of_release += (date_buf.getMonth()+ 1).toString() + "-";
+  date_of_release += date_buf.getDate().toString();
+  log(date_of_release);
+  // other parameters may require user input
+}
+
+function dataBlockWrapper(chunks){
+  var i = 0;
+  while (i < chunks.length){
+    var data_buf = new Uint8Array(chunks[i].byteLength + DATA_BLOCK_OVERHEAD_SIZE);
+    /* Under construction */
+    i++;
+  }
+}
+
+function sendBleCmd(address, command, value){
+  return new Promise((resolve, reject) => {
+    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+    .then((characteristic) => {
+      characteristic.writeValueWithoutResponse(
+        asciiToUint8Array(address.toString() + command + value.toString())
+      )
+      .then((promise) => {
+        resolve(promise);
+      });
+    });
+  });
+}
+
+async function isFormatCompleted(){
+  return new Promise(async (resolve, reject) => {
+    formatCompleted = false;
+    while(!formatCompleted){
+      await delay_ms(1000);
+    }
+    resolve("format completed");
   });
 }

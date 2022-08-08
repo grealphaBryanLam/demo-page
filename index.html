@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="w3.css" rel="stylesheet">
+    <!-- <link href="styles.css" rel="stylesheet" /> -->
     <link href="styles.css" rel="stylesheet" />
   </head>
   <body>
@@ -33,9 +34,12 @@
         <button id="read-control-gear" type="button">
           Identify Control Gear(s) connected
         </button>
+        <button id="recall-control-gear" type="button" style="display: none">
+          Resume from last connection
+        </button>
       </div>
 
-      <div id=selected-control-gear-container>
+      <div id="selected-control-gear-container">
         <div
           class="device-control-dashboard control-gear-selection"
           id="control-gear-selection-button-container"
@@ -59,6 +63,7 @@
         <button id="ble-cmd-end-file-transfer-button" type="button">BLE_CMD_END_FILE_TRANSFER (502)</button>
         <button id="control-gear-commissioning-button" type="button">Commissioning</button>
         <button id="get-all-control-gear-device-types-button" type="button">Get device types</button>
+        <button id="stop-BLE-start-wifi-button" type="button">Stop BT and open Wi-Fi interface</button>
         <div id="all-control-gear-gtin"></div>
       </div>
       <!-- DEBUG -->

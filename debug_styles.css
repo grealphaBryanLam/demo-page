@@ -22,16 +22,16 @@
 }
 
 #read-control-gear-container{
-  display: none;
+  /* display: none; */
   margin-top: 10px;
 }
 
 #selected-control-gear-container{
-  display: none;
+  /* display: none; */
 }
 
 #device-control-dashboard-container {
-  display: none;
+  /* display: none; */
   padding-top: 30px;
   padding-bottom: 30px;
 }
@@ -43,34 +43,33 @@
 #scene-menu-container,
 #set-dapc-scene-form-container,
 #remove-dapc-scene-form-container {
-  display: none;
+  /* display: none; */
 }
 
 #firmware-update-type-container,
-#firmware-update-form,
 #firmware-update-short-address-selection-container,
 #firmware-update-group-address-selection-container{
-  display: none;
+  /* display: none; */
 }
 
 #firmware-update-button{
-  display: none;
+  /* display: none; */
   margin-top: 10px;
 }
 
 #led-breathing{
-  display: none;
+  /* display: none; */
   margin-top: 10px;
 }
 
 #firmware-update-file-button-container{
-  display: none;
+  /* display: none; */
   margin-top: 10px;
 }
 
 .debug,
 #ble-debug-characteristic-container{
-  display: none;
+  /* display: none; */
   /* padding-top: 10px; */
 }
 
