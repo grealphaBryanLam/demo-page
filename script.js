@@ -1,5 +1,5 @@
 /** 
- * @version 0.16
+ * @version 0.16.1
  * @status debug
  * 
  * @issue
@@ -13,6 +13,10 @@
  *  - reset the layout after the firmware update process is completed 
  * 
  * @changelog
+ * ver 0.16.1
+ * - correct the valid range of DAPC level -> [0, 254]
+ * -> change the actions on UI accordingly
+ * 
  * ver 0.16
  * - changed the condition (#1188) for requestBluetoothDevice(). Avoid event "value changed after evaluation"
  * - added pop-up to remind users closing the window of file transfer
@@ -1322,10 +1326,14 @@ function getDescriptor(service_uuid, characteristic_uuid, descriptor_uuid) {
 }
 
 function change_led_status_text(brightness) {
-  if (brightness && brightness > 0) {
+  if (brightness && brightness > 0 && brightness <= MAX_BRIGHTNESS) {
     document.getElementById("led-status").innerHTML = "ON";
-  } else {
+  } 
+  else if(brightness == 0){
     document.getElementById("led-status").innerHTML = "OFF";
+  }
+  else{
+    document.getElementById("led-status").innerHTML = "N/A";
   }
 }
 
@@ -1381,16 +1389,24 @@ async function refreshControlDashboard() {
         if(dataview.byteLength > 0){
           var brightness = dataview.getUint8(0);
           change_led_status_text(brightness);
-          document.getElementById("led-brightness").innerHTML =
-            parseInt((brightness * 100) / MAX_BRIGHTNESS) +
-            "% (Val: " +
-            brightness +
-            ")";
+          if(brightness <= MAX_BRIGHTNESS){
+            document.getElementById("led-brightness").innerHTML =
+              parseInt((brightness * 100) / MAX_BRIGHTNESS) +
+              "% (Val: " +
+              brightness +
+              ")";
+          }
+          else{
+            document.getElementById("led-brightness").innerHTML =
+              "Data Loss";
+          }
 
           if(in_breathing && brightness != target_light_level){
             setTimeout(refreshControlDashboard, 500 /* ms */);
           }
-          led_brightness_slider.value = brightness;
+          if(brightness <= MAX_BRIGHTNESS){
+            led_brightness_slider.value = brightness;
+          }
           if(!in_breathing){
             loading_screen.style.display = "none";
           }
