@@ -1,6 +1,7 @@
 /** 
- * @version 0.16.1
+ * @version 0.17
  * @status debug
+ * @branch main
  * 
  * @issue
  * - [A] the GATTServer's property changes after its evaluation
@@ -8,14 +9,14 @@
  *  - use global reference (bluetoothDeviceGattServer) instead of
  * 
  * @todo
+ * - [A] add handler for getting Device's current FW version
  * - [A] fix the issue that client cannot perform some action by the time receiving new characteristic
  * - renew short/group address by using GTIN and ID before renewBusInfoOnBLEServer()
  *  - reset the layout after the firmware update process is completed 
  * 
  * @changelog
- * ver 0.16.1
- * - correct the valid range of DAPC level -> [0, 254]
- * -> change the actions on UI accordingly
+ * ver 0.17
+ * - 
  * 
  * ver 0.16
  * - changed the condition (#1188) for requestBluetoothDevice(). Avoid event "value changed after evaluation"
@@ -71,6 +72,7 @@
  * ver 0.4
  * - the refresh rate of control gear incrases
 */
+import { Octokit } from "https://cdn.skypack.dev/@octokit/core";
 
 const MAX_BRIGHTNESS = 254;
 const CONTROL_GEAR_MAX_NUM = 64;
@@ -98,6 +100,8 @@ const BLE_CMD_GO_TO_SCENE_MAX                         = " 352 ";
 const BLE_CMD_QUERY_SCENE_BASE                        = " 353 ";  // 353 - 368
 const BLE_CMD_QUERY_SCENE_MAX                         = " 368 ";
 const BLE_CMD_QUERY_ALL_SCENE_DAPC_VALUE              = " 369 ";
+const BLE_CMD_GET_FW_MAJOR_NUMBER                     = " 370 ";  // v[MAJOR].[MINOR].[PATCH]
+const BLE_CMD_GET_FW_MINOR_NUMBER                     = " 371 ";  // v[MAJOR].[MINOR].[PATCH]
 const BLE_CMD_SET_ALL_CONTROL_GEAR_SHORT_ADDRESSES    = " 400 ";
 const BLE_CMD_SET_ALL_CONTROL_GEAR_GROUP_ADDRESSES    = " 401 ";
 const BLE_CMD_GET_ALL_CONTROL_GEAR_GTIN               = " 402 ";
@@ -113,6 +117,7 @@ const BLE_CMD_BEGIN_FILE_TRANSFER                     = " 501 ";
 const BLE_CMD_END_FILE_TRANSFER                       = " 502 ";
 const BLE_CMD_FORMAT_SPIFFS                           = " 600 ";
 const BLE_CMD_EXIT_INITIALIZATION                     = " 601 ";
+const BLE_CMD_EMDCB_SENSOR_BRIGHTNESS_MAX             = " 700 ";
 const BLE_CMD_START_WIFI_ADVERTISMENT                 = " 800 ";
 
 const SET_SCENE_BASE = 305;
@@ -162,6 +167,16 @@ Object.freeze(REPLY_STR_BUF_TYPE);
 
 const TRANSMISSION_DELAY_MS = 500;
 
+const GITHUB_WEB = "https://github.com/";
+const GITHUB_USERNAME = "grealphaBryanLam"; // add '/'
+const GITHUB_REPO = "hex-release-test"; // add '/'
+const GITHUB_RELEASE = "releases/latest/download/";
+const FIRMWARE_NAME = "sld_dim_dali.hex";
+const octokit = new Octokit({
+  //Personal Access Token to GitHub Account grealphaBryanLam
+  auth: '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'
+});
+
 var bluetoothDevice;
 // global object reference to gattServer instance
 var bluetoothDeviceGattServer;
@@ -170,7 +185,7 @@ var buffer;
 var deviceConnected = false;
 var ble_characteristic_value_buf;
 var characteristic_buffer_value = new ArrayBuffer(20);
-var control_gear_short_address = 1; // short address for the command sequence
+var control_gear_short_address = 64; // default value: broadcast the message to all devices
 var availiable_control_gear;  // array of short addresses available of control gear
 var scene_value; // array of scene value (profile 0 - 15)
 var ble_mtu_size = 0;
@@ -195,6 +210,8 @@ var firmware_update_group_address;
 // 2022-05-18 Bryan
 var firmware_update_address_word;
 var firmware_update_value_word;
+var device_fw_version_major;
+var device_fw_version_minor;
 
 // 2022-05-23 Bryan
 var fade_time;
@@ -228,6 +245,21 @@ var date_of_release;
 var connectedDevicesList = new Array();
 
 var formatCompleted = false;
+
+var device_grp_short_arr_list;
+var device_grp_dapc_list;
+
+var tag_res;
+
+var github_latest_release_tag_name; /* file version */
+var github_latest_release_download_url; /* url for fetching the latest firmware file */
+var github_latest_release_assets_id;
+
+var github_release_fw_version_major;
+var github_release_fw_version_minor;
+
+var fw_update = false;
+
 // 2022-06-21
 // struct of each control gear
 const CONTROL_GEAR_INFO = function(short_address, group_address, gtin, id){
@@ -269,6 +301,7 @@ let firmware_update_short_address_select_menu = document.getElementById(
 let firmware_update_group_address_select_menu = document.getElementById(
                                               "firmware-update-group-address-selection-menu"
                                               );
+/* control gear short address(es) menu */                                            
 let control_gear_select_menu = document.getElementById("control-gear-select-menu");
 let led_brightness_text = document.getElementById("led-brightness"); 
 let fade_time_menu = document.getElementById("fade-time-menu");
@@ -287,6 +320,8 @@ let remove_dapc_scene_number = document.getElementById("remove-dapc-scene-number
 let remove_dapc_scene_button = document.getElementById("remove-dapc-scene-button"); 
 
 let recall_control_gear = document.getElementById("recall-control-gear");
+/* control mode select menu */
+let control_mode_select_menu = document.getElementById("control-mode-select-menu");
 
 // DEBUG
 let readCharacteristic = document.getElementById("read-ble-characteristic");
@@ -298,7 +333,9 @@ let control_gear_commissioning_button = document.getElementById("control-gear-co
 let get_all_control_gear_device_types_button = document.getElementById("get-all-control-gear-device-types-button");
 let http_post_send_data = document.getElementById("http-post-send-data");
 let ble_wifi_button = document.getElementById("stop-BLE-start-wifi-button")
-
+let fetch_github_latest_release = document.getElementById("fetch-github-latest-release");
+let fetch_device_fw_version = document.getElementById("fetch-device-fw-version");
+let check_any_newer_fw_version = document.getElementById("check-any-newer-fw-version");
 
 connectButton.addEventListener("click", async function () {
   var classList = document.getElementById("device-connection-text-box").classList;
@@ -1030,6 +1067,77 @@ http_post_send_data.addEventListener("click", async function(){
   });
 })
 
+fetch_github_latest_release.addEventListener("click", async () => {
+  var firmware_url = GITHUB_WEB + GITHUB_USERNAME + "/" + GITHUB_REPO + "/" + GITHUB_RELEASE + FIRMWARE_NAME;
+
+  // device_fw_major_ver/* Number */= checkDeviceCurrentFirmwareMajorVersion();
+  // device_fw_minor_ver/* Number */= checkDeviceCurrentFirmwareMinorVersion();
+  getGitHubReleaseInfo()
+  .then((promise) => {
+    getGitHubReleaseFileSize(github_latest_release_assets_id)
+    .then((file_size) => {
+      log("Result: " + github_latest_release_download_url);
+      getGitHubReleaseHexFile(github_latest_release_download_url, file_size);
+    });
+  });
+})
+
+fetch_device_fw_version.addEventListener("click", async () => {
+  checkDeviceCurrentFirmwareMajorVersion()
+  .then((promise) => {
+    checkDeviceCurrentFirmwareMinorVersion();
+  });
+})
+
+check_any_newer_fw_version.addEventListener("click", async () => {
+  // Get the latest release JSON object
+  tag_res = await octokit.request('GET /repos/{owner}/{repo}/releases/latest', {
+    owner: GITHUB_USERNAME,
+    repo: GITHUB_REPO
+  });
+  
+  // log(tag_res.data);
+  
+  // log(tag_res.data.tag_name);
+  github_latest_release_tag_name = tag_res.data.tag_name;
+
+  /* split tag name into file version number (major, minor) and filter prefix 'v' */
+  var github_release_version /* Array */= github_latest_release_tag_name.split('.');
+  // log(github_release_version[0].split('v').at(1));
+  github_release_fw_version_major = github_release_version[0].split('v').at(1)
+  // log(github_release_version[1]);
+  github_release_fw_version_minor = github_release_version[1];
+
+  log("Device FW ver: " + device_fw_version_major + "." + device_fw_version_minor);
+  log("GitHub FW ver: " + github_release_fw_version_major + "." + github_release_fw_version_minor);
+  if(github_release_fw_version_major > device_fw_version_major){
+    fw_update = true;
+    log("New firmware available");    
+  }
+  else if((github_release_fw_version_major == device_fw_version_major)
+      &&
+      (github_release_fw_version_minor > device_fw_version_minor)){
+    fw_update = true;
+    log("New firmware available");
+  }
+  else{
+    fw_update = false;
+    log("Device's firmware is up-to-date");
+  }
+
+  /* Download content when new firmware availiable */
+  getGitHubReleaseInfo()
+  .then((promise) => {
+    getGitHubReleaseFileSize(github_latest_release_assets_id)
+    .then((file_size) => {
+      log("Result: " + github_latest_release_download_url);
+      log(github_latest_release_download_url.split('/'));
+      getGitHubReleaseHexFile(github_latest_release_download_url, file_size);
+    });
+  });
+})
+/* Debug Panel END*/
+
 let deviceCache = null;
 
 async function connect() {
@@ -1326,13 +1434,13 @@ function getDescriptor(service_uuid, characteristic_uuid, descriptor_uuid) {
 }
 
 function change_led_status_text(brightness) {
-  if (brightness && brightness > 0 && brightness <= MAX_BRIGHTNESS) {
+  if (brightness && brightness > 0) {
     document.getElementById("led-status").innerHTML = "ON";
-  } 
-  else if(brightness == 0){
+  } else{
     document.getElementById("led-status").innerHTML = "OFF";
   }
-  else{
+  
+  if(brightness == 255){
     document.getElementById("led-status").innerHTML = "N/A";
   }
 }
@@ -1375,7 +1483,7 @@ async function refreshControlDashboard() {
         );
       }
     );
-      
+    
     // 2022-05-27 Bryan
     // DEBUG: Increase the waiting time, so that the response should not be empty
     await delay_ms(300);
@@ -1387,24 +1495,25 @@ async function refreshControlDashboard() {
       .then((dataview) => {
         log(dataview);
         if(dataview.byteLength > 0){
+          // valid range brightness: [0, 254]
           var brightness = dataview.getUint8(0);
           change_led_status_text(brightness);
-          if(brightness <= MAX_BRIGHTNESS){
+          if(brightness < 255){
             document.getElementById("led-brightness").innerHTML =
               parseInt((brightness * 100) / MAX_BRIGHTNESS) +
-              "% (Val: " +
-              brightness +
-              ")";
+                "% (Val: " +
+                brightness +
+                ")";
           }
           else{
-            document.getElementById("led-brightness").innerHTML =
-              "Data Loss";
+            document.getElementById("led-brightness").innerHTML = "Data Loss";
           }
 
           if(in_breathing && brightness != target_light_level){
             setTimeout(refreshControlDashboard, 500 /* ms */);
           }
-          if(brightness <= MAX_BRIGHTNESS){
+          // Do not update the slider if data is not in the valid range
+          if(brightness < 255){
             led_brightness_slider.value = brightness;
           }
           if(!in_breathing){
@@ -2415,7 +2524,7 @@ function updateFWUGroupAddress(){
     var i = 0;
     var matchedGroupFound = false; 
     while(i < control_gear_gtin.length && !matchedGroupFound) {
-      if(control_gear_gtin[i] == original_selected_gtin){
+      if(control_gear_gtin[i] == original_selected_gtin /* string */){
         // arbritary control gear with the matched gtin is found
         firmware_update_group_address = control_gear_group_address[i];
         firmware_update_address = firmware_update_group_address + CONTROL_GEAR_WRAPPED_GROUP_0_ADDRESS;
@@ -2593,12 +2702,12 @@ async function refreshDAPCSceneMenu(){
         // 16 values
         log("str_buf: " + str_buf);
         parseWordsSeparatedBySpace(str_buf, REPLY_STR_BUF_TYPE.SCENE_VALUE)
-        .then((scene_profile) => {
-          return scene_profile;
+        .then((scene_value) => {
+          return scene_value;
         })
-        .then((scene_profile) => {
-          /** show loading screen */
-          /**
+        .then((scene_value) => {
+          /** 
+           * show loading screen
            * clear all options in scene menu
            */
           document
@@ -2694,5 +2803,212 @@ async function isFormatCompleted(){
       await delay_ms(1000);
     }
     resolve("format completed");
+  });
+}
+
+control_mode_select_menu.addEventListener("change", async function(){
+  var dropdown = document.getElementById("control-mode-select-menu");
+  log(dropdown.value);
+  log(typeof(dropdown.value));
+  if(dropdown.value == "0"){
+    /* hide the group control */
+    document.getElementById("control-gear-group-select-container").style.display = "none";
+    /* show indivdual device control */
+    document.getElementById("control-gear-selection-container").style.display = "block";
+  }
+  else if(dropdown.value == "1"){
+    /* hide indivdual device control */
+    document.getElementById("control-gear-selection-container").style.display = "none";
+    /* show the group control */
+    generateControlGearInfoTable(short_add_list /* */, dapc_list/* */)
+    .then((promise) => {
+      document.getElementById("control-gear-group-select-container").style.display = "block";
+    });
+  }
+});
+
+function generateControlGearInfoTable(short_add_list, dapc_list){
+  return new Promise((resolve, reject) => {
+    // flush the table and add back the headers when the selected option is changed
+    document.getElementById("short-addresses-list")
+      .replaceChildren("<th>Short Add.</th>");
+    document.getElementById("dapc-value-list")
+      .replaceChildren("<th>DAPC</th>");
+
+    /** given: 
+     * (1) list of short address(es) in the device group N
+     * (2) list of the DAPC value based on (1)
+    */
+    var i;
+    /* Table for showing info */
+    for(i = 0; i < short_add_list.length; i++){
+      // append short address to table
+      var short_add_datum = document.createElement("td");
+      short_add_datum.textContent = short_add_list[i].toString();
+      document.getElementById("short-addresses-list")
+        .appendChild(short_add_datum);
+      // append DAPC to table
+      var dapc_datum = document.createElement("td");
+      dapc_datum.textContent = dapc_list[i];
+      document.getElementById("dapc-value-list")
+        .appendChild(dapc_datum); 
+    }
+
+    /** 
+     * Sliders for DAPC control
+     * create multiple div for sliders
+     */
+    var div_index = 0;
+    for(i = 0; i < short_add_list.length; i++){
+      /* one div for 10 sliders */
+      if(i % 10 == 9){
+        // create div for sliders (up to 10)
+        var slider_div = document.createElement("div");
+        slider_div.id = "led-sliers-group-address-div-" + div_index.toString();
+        document.getElementById("led-brightness-group-address-control-container")
+          .appendChild("control-gear-group-select-container");
+      }
+      var slider = document.createElement("input");
+      slider.type = "range";
+      slider.max = 254;
+      slider.min = 0;
+      slider.value = dapc_list[i];
+      slider.id = "led-control-slider-group-address-" + i.toString();
+      /* slider added */
+      document.getElementById("led-sliers-group-address-div-" + div_index.toString())
+        .appendChild(slider);
+    }
+    resolve("table settled");
+  });
+}
+
+// Octokit.js
+// https://github.com/octokit/core.js#readme
+async function getGitHubReleaseInfo(){
+  return new Promise(async(resolve, reject) => {
+    // Get the latest release JSON object
+    tag_res = await octokit.request('GET /repos/{owner}/{repo}/releases/latest', {
+      owner: GITHUB_USERNAME,
+      repo: GITHUB_REPO
+    });
+    
+    // log(tag_res.data);
+    
+    // log(tag_res.data.tag_name);
+    github_latest_release_tag_name = tag_res.data.tag_name;
+    // log(tag_res.data.assets[0]['browser_download_url']);
+    github_latest_release_download_url = tag_res.data.assets[0]['browser_download_url'];
+    
+    github_latest_release_assets_id = tag_res.data.assets[0]['id'];
+    resolve('data fetched');
+  });
+}
+
+async function getGitHubReleaseFileSize(id){
+  return new Promise(async (resolve, reject) => {
+    var res = await octokit.request('GET /repos/{owner}/{repo}/releases/assets/{asset_id}', {
+      owner: GITHUB_USERNAME,
+      repo: GITHUB_REPO,
+      asset_id: id
+    });
+    // log(res.data);
+    // log("get file size: " + res.data.size);
+    resolve(res.data.size);
+  });
+}
+
+function getGitHubReleaseHexFile(url, file_size){
+  var headers_obj = new Headers([
+    ["Content-Type", "application/octet-stream"],
+    ["Content-Length", file_size],
+  ]);
+
+  const init_obj = {
+    method: "GET",
+    headers: headers_obj,
+    // GET/HEAD method: does not have body,
+    mode: "no-cors",
+    keepalive: true,
+  };
+
+  log("file size: " + file_size);
+  fetch(url, init_obj)
+  .then((response) => {
+    log(response);
+    // response.blob()
+    // .then((myBlob) => {
+    //   log(myBlob);
+    //   myBlob.text()
+    //   .then((res) => {
+    //     log(res);
+    //   })
+    // });
+  });
+}
+
+/** 
+ * @TODO add handler  
+ */ 
+async function checkDeviceCurrentFirmwareMajorVersion(){
+  return new Promise(async (resolve, reject) => {
+    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+    .then((characteristic) => {
+      characteristic.writeValueWithoutResponse(
+        asciiToUint8Array(control_gear_short_address.toString() + BLE_CMD_GET_FW_MAJOR_NUMBER + (0).toString())
+      );
+    });
+
+    await delay_ms(NORMAL_DELAY_TIME);
+
+    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+    .then((characteristic) => {
+      characteristic.readValue()
+      .then((dataview) => {
+        log(dataview);
+        return new TextDecoder().decode(dataview);
+      })
+      .then(async (str_buf) => {
+        log("FW version major: " + str_buf);
+        log("length: " + str_buf.length)
+        device_fw_version_major = parseInt(str_buf);
+        log("Device FW ver major: " + device_fw_version_major + "; type: " + typeof(device_fw_version_major));
+      });
+    });
+
+    await delay_ms(NORMAL_DELAY_TIME);
+
+    resolve("promise");
+  });
+}
+
+async function checkDeviceCurrentFirmwareMinorVersion(){
+  return new Promise(async (resolve, reject) => {
+    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+    .then((characteristic) => {
+      characteristic.writeValueWithoutResponse(
+        asciiToUint8Array(control_gear_short_address.toString() + BLE_CMD_GET_FW_MINOR_NUMBER + (0).toString())
+      );
+    });
+
+    await delay_ms(NORMAL_DELAY_TIME);
+
+    getCharacteristic(SERVICE_UUID, CHARACTERISTIC_CMD_UUID)
+    .then((characteristic) => {
+      characteristic.readValue()
+      .then((dataview) => {
+        log(dataview);
+        return new TextDecoder().decode(dataview);
+      })
+      .then(async (str_buf) => {
+        log("FW version minor: " + str_buf);
+        log("length: " + str_buf.length)
+        device_fw_version_minor = parseInt(str_buf);
+        log("Device FW ver minor: " + device_fw_version_minor + "; type: " + typeof(device_fw_version_minor));
+      });
+    });
+
+    await delay_ms(NORMAL_DELAY_TIME);
+
+    resolve("promise");
   });
 }

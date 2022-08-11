@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="w3.css" rel="stylesheet">
     <!-- <link href="styles.css" rel="stylesheet" /> -->
-    <link href="styles.css" rel="stylesheet" />
+    <link href="debug_styles.css" rel="stylesheet" />
   </head>
   <body>
     <!-- Loading screen div -->
@@ -39,10 +39,25 @@
         </button>
       </div>
 
-      <div id="selected-control-gear-container">
+      <div
+        class="device-control-dashboard control-gear-selection" 
+        id="selected-control-gear-container"
+      >
+        <div id="control-mode-selection-menu-container">
+          <p>
+            Control:
+            <select id="control-mode-select-menu">
+              <!-- Single Device / All devices with same GTIN -->
+              <option value="0">Short Address</option>
+              <option value="1">Group Address</option>
+            </select>
+            <button id="control-mode-button" type="button" style="display: none"></button>
+          </p>
+        </div>
+        
         <div
           class="device-control-dashboard control-gear-selection"
-          id="control-gear-selection-button-container"
+          id="control-gear-selection-container"
         >
           <p>
             Devices' short address(es):
@@ -52,6 +67,10 @@
             </select>
             <button id="control-gear-select-button" type="button" style="display: none">Select</button>
           </p>
+        </div>
+
+        <div id="control-gear-group-select-container">
+          <p>TEST</p>
         </div>
       </div>
 
@@ -64,6 +83,9 @@
         <button id="control-gear-commissioning-button" type="button">Commissioning</button>
         <button id="get-all-control-gear-device-types-button" type="button">Get device types</button>
         <button id="stop-BLE-start-wifi-button" type="button">Stop BT and open Wi-Fi interface</button>
+        <button id="fetch-github-latest-release" type="button">Acquire latest release</button> 
+        <button id="fetch-device-fw-version" type="button">Get Device's FW version</button>
+        <button id="check-any-newer-fw-version" type="button">Check for FW Update</button>
         <div id="all-control-gear-gtin"></div>
       </div>
       <!-- DEBUG -->
@@ -80,6 +102,32 @@
 
           <div class="device-info-group-address" id="control-gear-group-address-display-text">Group Address: </div>
           <div class="device-info-group-address" id="control-gear-group-address"></div>
+        </div>
+
+        <div id="selected-control-gear-group-info-container">
+          <h4>Device Group Table</h4>
+          <table id="devices-info-table">
+            <tr id="short-addresses-list">
+              <!-- <td>1</td>
+              <td>2</td>
+              <td>3</td> -->
+            </tr>
+            <tr id="dapc-value-list">
+              <!-- <td>100</td>
+              <td>200</td>
+              <td>300</td> -->
+            </tr>
+          </table>
+          <div id="group-control-gear">
+            <!-- <input
+              type="range"
+              min="0"
+              max="254"
+              value="0"
+              class="slider"
+              id="led-brightness-slider"
+            /> -->
+          </div>
         </div>
 
         <div class="control-gear-selection" id="identify-control-gear-container">
@@ -151,6 +199,13 @@
             id="led-brightness-slider"
           />
           <button id="led-light-up" type="button">Light Up</button>
+        </div>
+
+        <div
+          class="device-control-dashboard"
+          id="led-brightness-group-address-control-container"
+        >
+          <!-- insert div from JS -->
         </div>
         
         <div class="device-control-dashboard" id="dapc-scenes-container">
@@ -243,7 +298,7 @@
         <div id="intra-DALI-bus-firmware-update-container">
           <h2>Firmware Update</h2>
           <form id="firmware-update-form">
-            <input id="firmware-update-file" type="file" name="control-gear-firmware" accept=".bin, .hex">
+            <input id="firmware-update-file" type="file" name="control-gear-firmware" accept=".hex">
           </form>
           <div id="firmware-update-file-button-container">
             <button id="firmware-update-file-button" type="button">Choose File</button>
@@ -251,7 +306,7 @@
           </div>
           <div id="firmware-update-type-container">
             <p>
-              Update by:
+              Address type:
               <select id="firmware-update-type-menu">
                 <option value=""></option>
                 <option value="short-address">Device</option>
@@ -295,6 +350,6 @@
     </div>
 
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
-    <script src="script.js"></script>
+    <script type="module" src="script.js"></script>
   </body>
 </html>
